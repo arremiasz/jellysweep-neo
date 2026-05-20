@@ -1,3 +1,4 @@
+// Package jellystat is the Statser adapter for the Jellystat provider.
 package jellystat
 
 import (
@@ -13,19 +14,26 @@ type jellystatClient struct {
 	client *jellystat.Client
 }
 
+// New constructs a Jellystat-backed Statser.
 func New(cfg *config.JellystatConfig) stats.Statser {
 	return &jellystatClient{
 		client: jellystat.New(cfg),
 	}
 }
 
-func (s *jellystatClient) GetItemLastPlayed(ctx context.Context, jellyfinID string) (time.Time, error) {
-	lastPlayed, err := s.client.GetLastPlayed(ctx, jellyfinID)
+func (s *jellystatClient) GetWatchInfo(ctx context.Context, jellyfinID string) (stats.WatchInfo, error) {
+	info, err := s.client.GetLastPlayed(ctx, jellyfinID)
 	if err != nil {
-		return time.Time{}, err
+		return stats.WatchInfo{}, err
 	}
-	if lastPlayed == nil || lastPlayed.LastPlayed == nil {
-		return time.Time{}, nil // No playback history found
+	var out stats.WatchInfo
+	if info == nil {
+		return out, nil
 	}
-	return *lastPlayed.LastPlayed, nil
+	if info.LastPlayed != nil {
+		out.LastPlayed = *info.LastPlayed
+	}
+	out.SessionCount = info.PlayCount
+	out.MaxSessionDuration = time.Duration(info.MaxSessionDuration) * time.Second
+	return out, nil
 }

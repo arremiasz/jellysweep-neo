@@ -2,7 +2,6 @@ package streamfilter
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -10,7 +9,6 @@ import (
 	"github.com/jon4hz/jellysweep/internal/engine/arr"
 	"github.com/jon4hz/jellysweep/internal/engine/stats"
 	"github.com/jon4hz/jellysweep/internal/filter"
-	"github.com/jon4hz/jellysweep/pkg/streamystats"
 )
 
 // Filter implements the filter.Filterer interface.
@@ -42,16 +40,12 @@ func (f *Filter) Apply(ctx context.Context, mediaItems []arr.MediaItem) ([]arr.M
 		default:
 		}
 
-		lastStreamed, err := f.stats.GetItemLastPlayed(ctx, item.JellyfinID)
+		watch, err := f.stats.GetWatchInfo(ctx, item.JellyfinID)
 		if err != nil {
-			if errors.Is(err, streamystats.ErrItemNotFound) {
-				log.Warn("Item not found in StreamyStats", "jellyfinID", item.JellyfinID)
-				log.Debug("Excluding item without streaming history", "jellyfinID", item.JellyfinID)
-				continue
-			}
-			log.Error("Failed to get last streamed time for item", "jellyfinID", item.JellyfinID, "error", err)
+			log.Error("Failed to get watch info for item", "jellyfinID", item.JellyfinID, "error", err)
 			return nil, err
 		}
+		lastStreamed := watch.LastPlayed
 		if lastStreamed.IsZero() {
 			filteredItems = append(filteredItems, item) // No last streamed time, mark for deletion
 			continue
