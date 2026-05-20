@@ -12,19 +12,22 @@ import (
 	"github.com/jon4hz/jellysweep/internal/config"
 	"github.com/jon4hz/jellysweep/internal/database"
 	"github.com/jon4hz/jellysweep/internal/engine"
+	"github.com/jon4hz/jellysweep/internal/settings"
 	"github.com/jon4hz/jellysweep/web/templates/pages"
 	"golang.org/x/sync/errgroup"
 )
 
 type AdminHandler struct {
-	engine *engine.Engine
-	config *config.Config
+	engine   *engine.Engine
+	config   *config.Config
+	settings *settings.Store
 }
 
-func NewAdmin(eng *engine.Engine, cfg *config.Config) *AdminHandler {
+func NewAdmin(eng *engine.Engine, cfg *config.Config, settingsStore *settings.Store) *AdminHandler {
 	return &AdminHandler{
-		engine: eng,
-		config: cfg,
+		engine:   eng,
+		config:   cfg,
+		settings: settingsStore,
 	}
 }
 
@@ -47,12 +50,12 @@ func (h *AdminHandler) AdminPanel(c *gin.Context) {
 		return
 	}
 
-	// Convert to admin media items (includes all fields including RequestedBy)
-	adminRequests := models.ToAdminMediaItems(requests, h.config)
-	adminMediaItems := models.ToAdminMediaItems(mediaItems, h.config)
+	app := h.settings.App()
+	adminRequests := models.ToAdminMediaItems(requests, app.CleanupMode, app.KeepCount)
+	adminMediaItems := models.ToAdminMediaItems(mediaItems, app.CleanupMode, app.KeepCount)
 
 	c.Header("Content-Type", "text/html")
-	if err := pages.AdminPanel(user, adminRequests, adminMediaItems, h.config.DryRun).Render(c.Request.Context(), c.Writer); err != nil {
+	if err := pages.AdminPanel(user, adminRequests, adminMediaItems, app.DryRun).Render(c.Request.Context(), c.Writer); err != nil {
 		log.Error("Failed to render admin panel", "error", err)
 	}
 }
@@ -181,8 +184,8 @@ func (h *AdminHandler) GetKeepRequests(c *gin.Context) {
 		return
 	}
 
-	// Convert to admin media items (includes all fields including RequestedBy)
-	adminRequests := models.ToAdminMediaItems(requests, h.config)
+	app := h.settings.App()
+	adminRequests := models.ToAdminMediaItems(requests, app.CleanupMode, app.KeepCount)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":      true,
@@ -198,8 +201,8 @@ func (h *AdminHandler) GetAdminMediaItems(c *gin.Context) {
 		return
 	}
 
-	// Convert to admin media items (includes all fields including RequestedBy)
-	adminMediaItems := models.ToAdminMediaItems(mediaItems, h.config)
+	app := h.settings.App()
+	adminMediaItems := models.ToAdminMediaItems(mediaItems, app.CleanupMode, app.KeepCount)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":    true,
@@ -319,7 +322,7 @@ func (h *AdminHandler) SchedulerPanel(c *gin.Context) {
 	}
 
 	c.Header("Content-Type", "text/html")
-	if err := pages.SchedulerPanel(user, jobs, cacheStats, h.config.DryRun).Render(c.Request.Context(), c.Writer); err != nil {
+	if err := pages.SchedulerPanel(user, jobs, cacheStats, h.settings.App().DryRun).Render(c.Request.Context(), c.Writer); err != nil {
 		log.Error("Failed to render scheduler panel", "error", err)
 	}
 }
@@ -332,7 +335,7 @@ func (h *AdminHandler) HistoryPanel(c *gin.Context) {
 	}
 
 	c.Header("Content-Type", "text/html")
-	if err := pages.HistoryPanel(user, h.config.DryRun).Render(c.Request.Context(), c.Writer); err != nil {
+	if err := pages.HistoryPanel(user, h.settings.App().DryRun).Render(c.Request.Context(), c.Writer); err != nil {
 		log.Error("Failed to render history panel", "error", err)
 	}
 }

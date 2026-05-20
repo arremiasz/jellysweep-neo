@@ -1,13 +1,13 @@
 package models
 
 import (
-	"github.com/jon4hz/jellysweep/internal/config"
 	"github.com/jon4hz/jellysweep/internal/database"
 )
 
 // ToUserMediaItem converts a database.Media to UserMediaItem for regular users.
-// This excludes sensitive fields like RequestedBy.
-func ToUserMediaItem(m database.Media, cfg *config.Config) UserMediaItem {
+// This excludes sensitive fields like RequestedBy. cleanupMode and keepCount are
+// surfaced on TV items so the UI can render the correct deletion semantics.
+func ToUserMediaItem(m database.Media, cleanupMode string, keepCount int) UserMediaItem {
 	item := UserMediaItem{
 		ID:              m.ID,
 		Title:           m.Title,
@@ -19,13 +19,11 @@ func ToUserMediaItem(m database.Media, cfg *config.Config) UserMediaItem {
 		Unkeepable:      m.Unkeepable,
 	}
 
-	// Add cleanup mode and keep count for TV series
-	if m.MediaType == database.MediaTypeTV && cfg != nil {
-		item.CleanupMode = string(cfg.GetCleanupMode())
-		item.KeepCount = cfg.GetKeepCount()
+	if m.MediaType == database.MediaTypeTV {
+		item.CleanupMode = cleanupMode
+		item.KeepCount = keepCount
 	}
 
-	// Include request info without revealing who requested
 	if m.Request.ID != 0 {
 		item.Request = &UserRequestInfo{
 			ID:     m.Request.ID,
@@ -37,16 +35,16 @@ func ToUserMediaItem(m database.Media, cfg *config.Config) UserMediaItem {
 }
 
 // ToUserMediaItems converts a slice of database.Media to UserMediaItems.
-func ToUserMediaItems(items []database.Media, cfg *config.Config) []UserMediaItem {
+func ToUserMediaItems(items []database.Media, cleanupMode string, keepCount int) []UserMediaItem {
 	result := make([]UserMediaItem, len(items))
 	for i, item := range items {
-		result[i] = ToUserMediaItem(item, cfg)
+		result[i] = ToUserMediaItem(item, cleanupMode, keepCount)
 	}
 	return result
 }
 
 // ToAdminMediaItem converts a database.Media to AdminMediaItem for admins.
-func ToAdminMediaItem(m database.Media, cfg *config.Config) AdminMediaItem {
+func ToAdminMediaItem(m database.Media, cleanupMode string, keepCount int) AdminMediaItem {
 	item := AdminMediaItem{
 		ID:              m.ID,
 		JellyfinID:      m.JellyfinID,
@@ -64,13 +62,11 @@ func ToAdminMediaItem(m database.Media, cfg *config.Config) AdminMediaItem {
 		Unkeepable:      m.Unkeepable,
 	}
 
-	// Add cleanup mode and keep count for TV series
-	if m.MediaType == database.MediaTypeTV && cfg != nil {
-		item.CleanupMode = string(cfg.GetCleanupMode())
-		item.KeepCount = cfg.GetKeepCount()
+	if m.MediaType == database.MediaTypeTV {
+		item.CleanupMode = cleanupMode
+		item.KeepCount = keepCount
 	}
 
-	// Include full request info for admins
 	if m.Request.ID != 0 {
 		item.Request = &AdminRequestInfo{
 			ID:        m.Request.ID,
@@ -86,10 +82,10 @@ func ToAdminMediaItem(m database.Media, cfg *config.Config) AdminMediaItem {
 }
 
 // ToAdminMediaItems converts a slice of database.Media to AdminMediaItems.
-func ToAdminMediaItems(items []database.Media, cfg *config.Config) []AdminMediaItem {
+func ToAdminMediaItems(items []database.Media, cleanupMode string, keepCount int) []AdminMediaItem {
 	result := make([]AdminMediaItem, len(items))
 	for i, item := range items {
-		result[i] = ToAdminMediaItem(item, cfg)
+		result[i] = ToAdminMediaItem(item, cleanupMode, keepCount)
 	}
 	return result
 }
