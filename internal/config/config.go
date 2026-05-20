@@ -108,8 +108,6 @@ type Config struct {
 	Gravatar *GravatarConfig `yaml:"gravatar" mapstructure:"gravatar"`
 	// Jellyfin holds the configuration for the Jellyfin server.
 	Jellyfin *JellyfinConfig `yaml:"jellyfin" mapstructure:"jellyfin"`
-	// Streamystats holds the configuration for the Streamystats server.
-	Streamystats *StreamystatsConfig `yaml:"streamystats" mapstructure:"streamystats"`
 	// Tunarr holds the configuration for the Tunarr server.
 	Tunarr *TunarrConfig `yaml:"tunarr" mapstructure:"tunarr"`
 }
@@ -311,16 +309,6 @@ type JellystatConfig struct {
 	Timeout int `yaml:"timeout" mapstructure:"timeout"`
 }
 
-// StreamystatsConfig holds the configuration for the Streamystats server.
-type StreamystatsConfig struct {
-	// URL is the base URL of the Streamystats server.
-	URL string `yaml:"url" mapstructure:"url"`
-	// ServerID is the Jellyfin server ID.
-	ServerID int `yaml:"server_id" mapstructure:"server_id"`
-	// Timeout is the HTTP client timeout in seconds.
-	Timeout int `yaml:"timeout" mapstructure:"timeout"`
-}
-
 // TunarrConfig holds the configuration for the Tunarr server.
 type TunarrConfig struct {
 	// URL is the base URL of the Tunarr server.
@@ -517,11 +505,6 @@ func bindNestedEnv(v *viper.Viper) {
 	v.MustBindEnv("jellystat.api_key", "JELLYSWEEP_JELLYSTAT_API_KEY")
 	v.MustBindEnv("jellystat.timeout", "JELLYSWEEP_JELLYSTAT_TIMEOUT")
 
-	// Streamystats
-	v.MustBindEnv("streamystats.url", "JELLYSWEEP_STREAMYSTATS_URL")
-	v.MustBindEnv("streamystats.server_id", "JELLYSWEEP_STREAMYSTATS_SERVER_ID")
-	v.MustBindEnv("streamystats.timeout", "JELLYSWEEP_STREAMYSTATS_TIMEOUT")
-
 	// Tunarr
 	v.MustBindEnv("tunarr.url", "JELLYSWEEP_TUNARR_URL")
 	v.MustBindEnv("tunarr.timeout", "JELLYSWEEP_TUNARR_TIMEOUT")
@@ -669,30 +652,14 @@ func validateConfig(c *Config) error {
 		}
 	}
 
-	if c.Jellystat != nil && c.Streamystats != nil {
-		return fmt.Errorf("only one of jellystat or streamystats can be configured at a time")
+	if c.Jellystat == nil {
+		return fmt.Errorf("jellystat config must be provided")
 	}
-
-	if c.Jellystat == nil && c.Streamystats == nil {
-		return fmt.Errorf("either jellystat or streamystats config must be provided")
+	if c.Jellystat.URL == "" {
+		return fmt.Errorf("jellystat URL is required")
 	}
-
-	if c.Jellystat != nil {
-		if c.Jellystat.URL == "" {
-			return fmt.Errorf("jellystat URL is required when jellystat is configured")
-		}
-		if c.Jellystat.APIKey == "" {
-			return fmt.Errorf("jellystat API key is required when jellystat is configured")
-		}
-	}
-
-	if c.Streamystats != nil {
-		if c.Streamystats.URL == "" {
-			return fmt.Errorf("streamystats URL is required when streamystats is configured")
-		}
-		if c.Streamystats.ServerID == 0 {
-			return fmt.Errorf("streamystats server ID is required when streamystats is configured")
-		}
+	if c.Jellystat.APIKey == "" {
+		return fmt.Errorf("jellystat API key is required")
 	}
 
 	if c.Tunarr != nil {
@@ -754,10 +721,6 @@ func sanitizeConfig(c *Config) {
 
 	if c.Jellystat != nil {
 		c.Jellystat.URL = urlSanitize(c.Jellystat.URL)
-	}
-
-	if c.Streamystats != nil {
-		c.Streamystats.URL = urlSanitize(c.Streamystats.URL)
 	}
 
 	if c.Tunarr != nil {

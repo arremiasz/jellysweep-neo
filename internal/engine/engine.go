@@ -19,7 +19,6 @@ import (
 	"github.com/jon4hz/jellysweep/internal/engine/jellyfin"
 	"github.com/jon4hz/jellysweep/internal/engine/stats"
 	"github.com/jon4hz/jellysweep/internal/engine/stats/jellystat"
-	"github.com/jon4hz/jellysweep/internal/engine/stats/streamystats"
 	"github.com/jon4hz/jellysweep/internal/filter"
 	agefilter "github.com/jon4hz/jellysweep/internal/filter/age_filter"
 	databasefilter "github.com/jon4hz/jellysweep/internal/filter/database_filter"
@@ -89,13 +88,6 @@ func New(cfg *config.Config, db database.DB, initialDBMigration bool) (*Engine, 
 	var statsClient stats.Statser
 	if cfg.Jellystat != nil {
 		statsClient = jellystat.New(cfg.Jellystat)
-	}
-
-	if cfg.Streamystats != nil {
-		statsClient, err = streamystats.New(cfg.Streamystats, cfg.Jellyfin.APIKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create StreamyStats client: %w", err)
-		}
 	}
 
 	engineCache, err := cache.NewEngineCache(cfg.Cache)
@@ -286,11 +278,12 @@ func (e *Engine) removeRecentlyPlayedItems(ctx context.Context) {
 	}
 
 	for _, item := range mediaItems {
-		lastPlayed, err := e.stats.GetItemLastPlayed(ctx, item.JellyfinID)
+		watch, err := e.stats.GetWatchInfo(ctx, item.JellyfinID)
 		if err != nil {
-			log.Error("Failed to get last played time for item", "title", item.Title, "jellyfinID", item.JellyfinID, "error", err)
+			log.Error("Failed to get watch info for item", "title", item.Title, "jellyfinID", item.JellyfinID, "error", err)
 			continue
 		}
+		lastPlayed := watch.LastPlayed
 
 		if lastPlayed.IsZero() {
 			log.Debug("Item has never been played, skipping removal", "title", item.Title, "jellyfinID", item.JellyfinID)
