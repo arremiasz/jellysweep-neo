@@ -30,6 +30,8 @@ func New(dbpath string) (*Client, error) {
 		&UserPermissions{},
 		&EmailSettings{},
 		&HistoryEvent{},
+		&AppSettings{},
+		&LibrarySettings{},
 	); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}

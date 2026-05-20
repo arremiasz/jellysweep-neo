@@ -38,6 +38,16 @@ type Media struct {
 	DBDeleteReason          DBDeleteReason
 	DiskUsageDeletePolicies []DiskUsageDeletePolicy `gorm:"constraint:OnDelete:CASCADE;"`
 	Request                 Request                 `gorm:"constraint:OnDelete:CASCADE;"`
+
+	// New lifetime-model fields (populated by the refactored engine in a later push):
+	// ImportedAt is the date Sonarr/Radarr added the file. Used as the lifetime origin.
+	ImportedAt time.Time `gorm:"index"`
+	// LastWatchedAt is the most recent playback timestamp from Jellystat. For shows, this resets lifetime.
+	LastWatchedAt *time.Time `gorm:"index"`
+	// QueuedAt is the moment the item entered the deletion queue. Once set, the deletion-period grace timer starts.
+	QueuedAt *time.Time `gorm:"index"`
+	// QueueReason records why the item was queued ("lifetime_expired" or "watched_completed").
+	QueueReason string
 }
 
 func (c *Client) CreateMediaItems(ctx context.Context, mediaItems []Media) error {
