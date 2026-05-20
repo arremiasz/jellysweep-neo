@@ -11,6 +11,7 @@ import (
 	"github.com/jon4hz/jellysweep/internal/config"
 	"github.com/jon4hz/jellysweep/internal/database"
 	"github.com/jon4hz/jellysweep/internal/engine"
+	"github.com/jon4hz/jellysweep/internal/settings"
 	"github.com/spf13/cobra"
 )
 
@@ -46,6 +47,12 @@ func startServer(cmd *cobra.Command, _ []string) {
 
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
+
+	settingsStore, err := settings.New(ctx, db, cfg)
+	if err != nil {
+		log.Fatal("failed to initialize settings store", "error", err)
+	}
+	_ = settingsStore // wired into engine and API in subsequent pushes
 
 	engine, err := engine.New(cfg, db, !exists)
 	if err != nil {

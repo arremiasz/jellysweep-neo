@@ -44,6 +44,17 @@ type DB interface {
 	MediaDB
 	RequestDB
 	HistoryDB
+	SettingsDB
+}
+
+// SettingsDB defines the interface for settings-related database operations.
+type SettingsDB interface {
+	GetAppSettings(ctx context.Context) (*AppSettings, error)
+	SaveAppSettings(ctx context.Context, s *AppSettings) error
+	GetLibrarySettings(ctx context.Context, name string) (*LibrarySettings, error)
+	ListLibrarySettings(ctx context.Context) ([]LibrarySettings, error)
+	UpsertLibrarySettings(ctx context.Context, ls *LibrarySettings) error
+	DeleteLibrarySettings(ctx context.Context, name string) error
 }
 
 // MediaDB defines the interface for media-related database operations.
