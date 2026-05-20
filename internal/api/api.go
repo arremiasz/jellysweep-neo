@@ -19,6 +19,7 @@ import (
 	"github.com/jon4hz/jellysweep/internal/config"
 	"github.com/jon4hz/jellysweep/internal/database"
 	"github.com/jon4hz/jellysweep/internal/engine"
+	"github.com/jon4hz/jellysweep/internal/settings"
 	"github.com/jon4hz/jellysweep/internal/static"
 )
 
@@ -27,10 +28,11 @@ type Server struct {
 	db           database.DB
 	ginEngine    *gin.Engine
 	engine       *engine.Engine
+	settings     *settings.Store
 	authProvider auth.AuthProvider
 }
 
-func New(ctx context.Context, cfg *config.Config, db database.DB, e *engine.Engine, debug bool) (*Server, error) {
+func New(ctx context.Context, cfg *config.Config, db database.DB, e *engine.Engine, settingsStore *settings.Store, debug bool) (*Server, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
 	}
@@ -57,6 +59,7 @@ func New(ctx context.Context, cfg *config.Config, db database.DB, e *engine.Engi
 		ginEngine:    ginEngine,
 		authProvider: authProvider,
 		engine:       e,
+		settings:     settingsStore,
 	}, nil
 }
 
@@ -75,7 +78,7 @@ func (s *Server) setupSession() {
 func (s *Server) setupRoutes() error {
 	s.setupSession()
 
-	h := handler.New(s.engine, s.cfg)
+	h := handler.New(s.engine, s.cfg, s.settings)
 
 	staticSub, err := fs.Sub(static.StaticFS, "static")
 	if err != nil {
@@ -135,7 +138,7 @@ func (s *Server) setupAdminRoutes() {
 	adminGroup := s.ginEngine.Group("/admin")
 	adminGroup.Use(s.authProvider.RequireAuth(), s.authProvider.RequireAdmin())
 
-	h := handler.NewAdmin(s.engine, s.cfg)
+	h := handler.NewAdmin(s.engine, s.cfg, s.settings)
 
 	// Admin panel page
 	adminGroup.GET("", h.AdminPanel)
@@ -146,6 +149,9 @@ func (s *Server) setupAdminRoutes() {
 
 	// History panel page
 	adminGroup.GET("/history", h.HistoryPanel)
+
+	// Settings panel page
+	adminGroup.GET("/settings", h.SettingsPanel)
 
 	// Admin API routes
 	adminAPI := adminGroup.Group("/api")
@@ -172,6 +178,12 @@ func (s *Server) setupAdminRoutes() {
 	// User management endpoints
 	adminAPI.GET("/users", h.GetAllUsers)
 	adminAPI.PUT("/users/:id/permissions", h.UpdateUserPermissions)
+
+	// Settings endpoints
+	adminAPI.GET("/settings", h.GetSettings)
+	adminAPI.PUT("/settings/app", h.UpdateAppSettings)
+	adminAPI.PUT("/settings/libraries/:name", h.UpsertLibrarySettings)
+	adminAPI.DELETE("/settings/libraries/:name", h.DeleteLibrarySettings)
 }
 
 func (s *Server) setupPluginRoutes() error {

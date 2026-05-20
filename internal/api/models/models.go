@@ -2,6 +2,27 @@ package models
 
 import "time"
 
+// AppSettingsView is the shape passed into the settings page template.
+type AppSettingsView struct {
+	DryRun                      bool
+	CleanupSchedule             string
+	LeavingCollectionsEnabled   bool
+	LeavingCollectionsMovieName string
+	LeavingCollectionsTVName    string
+	CleanupMode                 string
+	KeepCount                   int
+}
+
+// LibrarySettingsView is the per-library shape passed into the settings page template.
+type LibrarySettingsView struct {
+	Name                   string
+	Enabled                bool
+	LifetimeDays           int
+	DeletionPeriodDays     int
+	ProtectionDays         int
+	CompletionThresholdPct int
+}
+
 // User represents a user in the system, including their authentication details and admin status.
 type User struct {
 	ID          uint // ID from the database

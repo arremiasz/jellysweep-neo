@@ -11,18 +11,21 @@ import (
 	"github.com/jon4hz/jellysweep/internal/config"
 	"github.com/jon4hz/jellysweep/internal/database"
 	"github.com/jon4hz/jellysweep/internal/engine"
+	"github.com/jon4hz/jellysweep/internal/settings"
 	"github.com/jon4hz/jellysweep/web/templates/pages"
 )
 
 type Handler struct {
-	engine *engine.Engine
-	config *config.Config
+	engine   *engine.Engine
+	config   *config.Config
+	settings *settings.Store
 }
 
-func New(eng *engine.Engine, cfg *config.Config) *Handler {
+func New(eng *engine.Engine, cfg *config.Config, settingsStore *settings.Store) *Handler {
 	return &Handler{
-		engine: eng,
-		config: cfg,
+		engine:   eng,
+		config:   cfg,
+		settings: settingsStore,
 	}
 }
 
@@ -34,31 +37,28 @@ func (h *Handler) Home(c *gin.Context) {
 
 	mediaItems, err := h.engine.GetMediaItems(c.Request.Context(), false)
 	if err != nil {
-		// Log error and fall back to empty data
 		log.Error("Failed to get media items", "error", err)
 		mediaItems = []database.Media{}
 	}
 
-	// Convert to user-safe media items (excludes sensitive fields like RequestedBy)
-	userMediaItems := models.ToUserMediaItems(mediaItems, h.config)
+	app := h.settings.App()
+	userMediaItems := models.ToUserMediaItems(mediaItems, app.CleanupMode, app.KeepCount)
 
 	c.Header("Content-Type", "text/html")
 
-	// If user is admin, get pending requests count for navbar indicator
 	if user.IsAdmin {
 		requests, err := h.engine.GetMediaWithPendingRequest(c.Request.Context())
 		if err != nil {
-			// Log error but continue without pending count
-			if err := pages.Dashboard(user, userMediaItems, h.config.DryRun).Render(c.Request.Context(), c.Writer); err != nil {
+			if err := pages.Dashboard(user, userMediaItems, app.DryRun).Render(c.Request.Context(), c.Writer); err != nil {
 				log.Error("Failed to render dashboard", "error", err)
 			}
 			return
 		}
-		if err := pages.DashboardWithPendingRequests(user, userMediaItems, len(requests), h.config.DryRun).Render(c.Request.Context(), c.Writer); err != nil {
+		if err := pages.DashboardWithPendingRequests(user, userMediaItems, len(requests), app.DryRun).Render(c.Request.Context(), c.Writer); err != nil {
 			log.Error("Failed to render dashboard with pending requests", "error", err)
 		}
 	} else {
-		if err := pages.Dashboard(user, userMediaItems, h.config.DryRun).Render(c.Request.Context(), c.Writer); err != nil {
+		if err := pages.Dashboard(user, userMediaItems, app.DryRun).Render(c.Request.Context(), c.Writer); err != nil {
 			log.Error("Failed to render dashboard", "error", err)
 		}
 	}
@@ -186,8 +186,8 @@ func (h *Handler) GetMediaItems(c *gin.Context) {
 		return
 	}
 
-	// Convert to user-safe media items (excludes sensitive fields like RequestedBy)
-	userMediaItems := models.ToUserMediaItems(mediaItems, h.config)
+	app := h.settings.App()
+	userMediaItems := models.ToUserMediaItems(mediaItems, app.CleanupMode, app.KeepCount)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":    true,
