@@ -36,6 +36,11 @@ func (e *Engine) cleanupMedia(ctx context.Context) error {
 		return err
 	}
 
+	deleteOpts := arr.DeleteOptions{
+		CleanupMode: app.CleanupMode,
+		KeepCount:   app.KeepCount,
+	}
+
 	for _, item := range mediaItems {
 		if !readyToDelete(item, now) {
 			log.Debug("skipping deletion, grace period not yet elapsed", "title", item.Title, "deleteAt", item.DefaultDeleteAt)
@@ -53,7 +58,7 @@ func (e *Engine) cleanupMedia(ctx context.Context) error {
 				log.Warn("Sonarr client not configured, cannot delete TV show", "title", item.Title)
 				continue
 			}
-			if err := e.sonarr.DeleteMedia(ctx, item.ArrID, item.Title); err != nil {
+			if err := e.sonarr.DeleteMedia(ctx, item.ArrID, item.Title, deleteOpts); err != nil {
 				log.Error("failed to delete Sonarr media", "title", item.Title, "error", err)
 				continue
 			}
@@ -75,7 +80,7 @@ func (e *Engine) cleanupMedia(ctx context.Context) error {
 				log.Warn("Radarr client not configured, cannot delete movie", "title", item.Title)
 				continue
 			}
-			if err := e.radarr.DeleteMedia(ctx, item.ArrID, item.Title); err != nil {
+			if err := e.radarr.DeleteMedia(ctx, item.ArrID, item.Title, deleteOpts); err != nil {
 				log.Error("failed to delete Radarr media", "title", item.Title, "error", err)
 				continue
 			}

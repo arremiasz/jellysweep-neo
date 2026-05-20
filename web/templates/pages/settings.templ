@@ -11,7 +11,11 @@ templ SettingsPanel(user *models.User, app models.AppSettingsView, libraries []m
 		<div class="space-y-6">
 			<div>
 				<h1 class="text-3xl font-bold text-gray-100">Settings</h1>
-				<p class="mt-1 text-sm text-gray-400">Manage global and per-library cleanup settings. Changes take effect on the next sweep.</p>
+				<p class="mt-1 text-sm text-gray-400">Manage global and per-library cleanup settings.</p>
+				<p class="mt-2 text-xs text-gray-500">
+					Most changes (dry-run, library settings, cleanup mode, leaving collections) apply on the next scheduled sweep — no restart needed.
+					The <span class="font-medium text-gray-400">cleanup schedule</span> field requires a restart to take effect.
+				</p>
 			</div>
 
 			<div id="settings-status" class="hidden rounded-md p-3 text-sm"></div>

@@ -17,7 +17,7 @@ ______________________________________________________________________
 
 ## ✨ Key Features
 
-- 🧠 **Smart Analytics** - Checks jellyseerr for requests and Jellystat/Streamystats for stats
+- 🧠 **Smart Analytics** - Checks Jellyseerr for requests and Jellystat for playback stats
 - 🏷️ **Tag-Based Control** - Leverage your existing Sonarr/Radarr tags to control jellysweep
 - 💾 **Disk Usage Monitoring** - Adaptive cleanup based on disk usage thresholds
 - 🧹 **Flexible Cleanup Modes** - Choose how much of TV Series should be deleted
@@ -33,11 +33,8 @@ ______________________________________________________________________
   - [✨ Key Features](#-key-features)
   - [📋 Table of Contents](#-table-of-contents)
   - [🚀 How It Works](#-how-it-works)
-  - [🔍️ Filters](#%EF%B8%8F-filters)
+    - [Deletion model](#deletion-model)
   - [🧹 Cleanup Modes](#-cleanup-modes)
-  - [💾 Disk Usage-Based Cleanup](#-disk-usage-based-cleanup)
-    - [Configuration Example](#configuration-example)
-    - [Behavior Examples](#behavior-examples)
   - [📸 Screenshots](#-screenshots)
     - [Dashboard Overview](#dashboard-overview)
     - [Statistics Dashboard](#statistics-dashboard)
@@ -63,29 +60,16 @@ ______________________________________________________________________
 
 ## 🚀 How It Works
 
-Jellysweep looks up your entire media library in jellyfin, sonarr and radarr. Based on different user-defined filers, it then decides which
-media items are no longer needed and marks them for deletion by adding special tags in sonarr/radarr.
-Your users can then request to keep specific items via the web interface. Admins can review and approve/decline these requests.
-Users will receive an email notification, if content that they requested (in jellyseer) is marked for deletion.
-After a configurable grace period, the media items are then deleted. There is als an option to speed up the deletion process when disk space is running low.
+Jellysweep tracks your Sonarr/Radarr library and uses a simple lifetime model to decide what to delete. Per-library settings live in the database and are edited from the admin UI; the YAML config is consulted only for service URLs, secrets, and first-run defaults.
 
-## 🔍️ Filters
+### Deletion model
 
-At the core of jellysweep are filters that allow you to define criteria which must be met for a media item to be eligible for deletion.
-If one of the filters is not met, the item will be skipped and not marked for deletion.
+Every library has a **lifetime** (days before an item is auto-queued) and a **deletion period** (grace days between queueing and actual on-disk deletion).
 
-Filters can be configured per library and include:
+- **Movies** are queued when either (a) their lifetime expires (counted from the import date) **or** (b) the user finishes watching them — defined as the sum of recorded Jellystat playback sessions reaching a configurable percentage of the movie's runtime (default 90%). Whichever fires first.
+- **Shows** are queued only when the lifetime expires, counted from the most recent of import-date and last-watched. Watching any episode resets the lifetime; if a show has already been queued, watching an episode removes it from the queue.
 
-| Filter                   | Description                                                                      |
-| ------------------------ | -------------------------------------------------------------------------------- |
-| `content_age_threshold`  | Minimum age of the content in days                                               |
-| `last_stream_threshold`  | Minimum days since the content was last streamed                                 |
-| `content_size_threshold` | Minimum size of the content in bytes (0 = no minimum)                            |
-| `tunarr_enabled`         | Whether to protect items used by Tunarr channels (requires Tunarr configuration) |
-| `exclude_tags`           | List of Sonarr/Radarr tags that exclude content from deletion                    |
-
-> [!IMPORTANT]
-> Once a media item is marked for deletion, it wont go through the filters again. Filter changes will only affect new items that are being considered for deletion.
+Users can request to keep a queued item via the web UI; admins approve or decline. Approved items get protected for the library's protection period.
 
 ## 🧹 Cleanup Modes
 
@@ -101,39 +85,6 @@ Both selective modes automatically unmonitor deleted episodes in Sonarr to preve
 
 > [!TIP]
 > The selective modes in combination with [prefetcharr](https://github.com/p-hueber/prefetcharr) let you automatically scale your media collection on demand.
-
-## 💾 Disk Usage-Based Cleanup
-
-Jellysweep monitors disk usage and speeds up cleanup when you're running low on storage. When disk space is tight, it reduces the grace period for deletions while still giving you time to save anything important during normal operation.
-
-> [!IMPORTANT]
-> For disk usage monitoring to work in Docker containers, Jellyfin library paths must be mounted at the same locations inside the Jellysweep container. For example, if Jellyfin has `/data/movies` mapped to `/movies`, Jellysweep also needs `/data/movies` mapped to `/movies`
-
-### Configuration Example
-
-```yaml
-libraries:
-  "Movies":
-    cleanup_delay: 30  # Standard 30-day grace period
-    disk_usage_thresholds:
-      - usage_percent: 75.0      # When disk usage reaches 75%
-        max_cleanup_delay: 14    # Reduce grace period to 14 days
-      - usage_percent: 85.0      # When disk usage reaches 85%
-        max_cleanup_delay: 7     # Reduce grace period to 7 days
-      - usage_percent: 90.0      # When disk usage reaches 90%
-        max_cleanup_delay: 3     # Reduce grace period to 3 days
-```
-
-### Behavior Examples
-
-Let's say today is 2025-07-26:
-
-- **Disk usage 80%**: Media gets deleted on `2025-08-25` (after 30 days)
-- **Disk usage 87%**: Media gets deleted on `2025-08-09` (after 14 days)
-- **Disk usage 93%**: Media gets deleted on `2025-08-02` (after 7 days)
-- **Disk usage 97%**: Media gets deleted on `2025-07-29` (after 3 days)
-
-______________________________________________________________________
 
 ## 📸 Screenshots
 
@@ -176,7 +127,7 @@ ______________________________________________________________________
 - Access to your Jellyfin ecosystem including:
   - Sonarr
   - Radarr
-  - Jellystat or Streamystats
+  - Jellystat
   - Jellyseerr
 
 ### Docker Compose
@@ -434,21 +385,18 @@ All configuration options can be set via environment variables with the `JELLYSW
 | `JELLYSWEEP_RADARR_API_KEY`                 | *(optional)*                    | Radarr API key                                                                         |
 | `JELLYSWEEP_JELLYFIN_URL`                   | *(required)*                    | Jellyfin server URL                                                                    |
 | `JELLYSWEEP_JELLYFIN_API_KEY`               | *(required)*                    | Jellyfin API key                                                                       |
-| `JELLYSWEEP_JELLYSTAT_URL`                  | *(optional)*                    | Jellystat server URL                                                                   |
-| `JELLYSWEEP_JELLYSTAT_API_KEY`              | *(optional)*                    | Jellystat API key                                                                      |
-| `JELLYSWEEP_STREAMYSTATS_URL`               | *(optional)*                    | Streamystats server URL                                                                |
-| `JELLYSWEEP_STREAMYSTATS_SERVER_ID`         | *(optional)*                    | Streamystats Jellyfin server ID                                                        |
+| `JELLYSWEEP_JELLYSTAT_URL`                  | *(required)*                    | Jellystat server URL                                                                   |
+| `JELLYSWEEP_JELLYSTAT_API_KEY`              | *(required)*                    | Jellystat API key                                                                      |
 | `JELLYSWEEP_TUNARR_URL`                     | *(optional)*                    | Tunarr server URL                                                                      |
 | **Cache Configuration**                     |                                 |                                                                                        |
 | `JELLYSWEEP_CACHE_TYPE`                     | `memory`                        | Cache type: `memory` or `redis`                                                        |
 | `JELLYSWEEP_CACHE_REDIS_URL`                | `localhost:6379`                | Redis server URL (when using redis cache)                                              |
 
 > [!TIP]
-> Either Sonarr or Radarr (or both) must be configured. Only one of Jellystat or Streamystats can be configured at a time.
+> Either Sonarr or Radarr (or both) must be configured. Jellystat is required — it is the only supported playback-stats backend.
 
 > [!IMPORTANT]
-> The library configuration cannot be set via environment variables and must be defined in the configuration file.
-> .
+> Per-library settings cannot be set via environment variables. On first run they seed from `libraries:` in the YAML file; after that they are managed via the `/admin/settings` UI.
 
 ### Configuration File
 
@@ -511,59 +459,23 @@ leaving_collections_enabled: true      # Create collections for media scheduled 
 leaving_collections_movie_name: "Leaving Movies"
 leaving_collections_tv_name: "Leaving TV Shows"
 
-# Library-specific settings
+# Per-library seed settings. Used only on first run to populate the settings
+# database; after that, the /admin/settings UI is authoritative and changes
+# here are ignored. Names must match Jellyfin library names exactly.
 libraries:
-
-  # Name must match the Library name in Jellyfin
   "Movies":
     enabled: true
-    cleanup_delay: 60
-    protection_period: 90         # Protect requested content for 90 days
-    # Filter configuration
-    filter:
-      content_age_threshold: 120        # Content must be at least 120 days old
-      last_stream_threshold: 90         # Last watched at least 90 days ago
-      content_size_threshold: 1073741824  # 1GB minimum (0 = no minimum)
-      tunarr_enabled: true              # Protect items used by Tunarr channels (requires tunarr config)
-      exclude_tags:
-        - "jellysweep-exclude"
-        - "keep"
-        - "favorites"
-    # Disk usage-based cleanup for movies
-    disk_usage_thresholds:
-      - usage_percent: 70.0       # When disk usage reaches 70%
-        max_cleanup_delay: 30     # Reduce grace period to 30 days
-      - usage_percent: 85.0       # When disk usage reaches 85%
-        max_cleanup_delay: 14      # Reduce grace period to 14 days
-      - usage_percent: 90.0       # When disk usage reaches 90%
-        max_cleanup_delay: 7      # Reduce grace period to 7 days
-      - usage_percent: 95.0       # When disk usage reaches 95%
-        max_cleanup_delay: 2      # Reduce grace period to 2 days
+    lifetime_days: 180            # Auto-queue a movie 180 days after it was added
+    deletion_period_days: 30      # Grace period between queueing and on-disk deletion
+    protection_days: 90           # Approved keep requests protect for 90 days
+    completion_threshold_pct: 90  # Watching >=90% of a movie queues it immediately
 
   "TV Shows":
     enabled: true
-    cleanup_delay: 60
-    protection_period: 90
-    # Filter configuration
-    filter:
-      content_age_threshold: 120
-      last_stream_threshold: 90
-      content_size_threshold: 2147483648  # 2GB minimum
-      tunarr_enabled: false             # Disable Tunarr filter for this library
-      exclude_tags:
-        - "jellysweep-exclude"
-        - "ongoing"
-        - "keep"
-    # Disk usage-based cleanup for TV shows
-    disk_usage_thresholds:
-      - usage_percent: 70.0
-        max_cleanup_delay: 30
-      - usage_percent: 85.0
-        max_cleanup_delay: 14
-      - usage_percent: 90.0
-        max_cleanup_delay: 7
-      - usage_percent: 95.0
-        max_cleanup_delay: 2
+    lifetime_days: 365            # Lifetime resets whenever any episode is watched
+    deletion_period_days: 30
+    protection_days: 90
+    completion_threshold_pct: 90  # Unused for shows but kept for symmetry
 
 # Email notifications for users about upcoming deletions
 email:
@@ -617,17 +529,6 @@ jellystat:
   api_key: "your-jellystat-api-key"
   timeout: 30                          # HTTP client timeout in seconds (default: 30)
 
-# Alternative to Jellystat (configure only one)
-streamystats:
-  url: "http://localhost:3001"
-  server_id: 1                         # Jellyfin server ID in Streamystats
-  timeout: 30                          # HTTP client timeout in seconds (default: 30)
-
-# Tunarr (optional)
-# Protect items that are used by Tunarr TV channels. When configured, Jellysweep will
-# fetch channel programming and skip deletion for any movie or series that is
-# currently used by a Tunarr program.
-#
 tunarr:
   url: "http://localhost:8000"
   timeout: 30                          # HTTP client timeout in seconds (default: 30)

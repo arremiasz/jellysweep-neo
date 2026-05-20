@@ -237,12 +237,7 @@ func (r *Radarr) ensureTagExists(ctx context.Context, label string) error {
 	return nil
 }
 
-func (r *Radarr) DeleteMedia(ctx context.Context, movieID int32, title string) error {
-	if r.cfg.DryRun {
-		log.Info("dry run: would delete Radarr movie", "title", title)
-		return nil
-	}
-
+func (r *Radarr) DeleteMedia(ctx context.Context, movieID int32, title string, _ arr.DeleteOptions) error {
 	resp, err := r.client.MovieAPI.DeleteMovie(r.radarrAuthCtx(ctx), movieID).
 		DeleteFiles(true).
 		Execute()

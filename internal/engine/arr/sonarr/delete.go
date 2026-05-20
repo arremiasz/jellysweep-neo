@@ -9,16 +9,17 @@ import (
 	"github.com/charmbracelet/log"
 	sonarrAPI "github.com/devopsarr/sonarr-go/sonarr"
 	"github.com/jon4hz/jellysweep/internal/config"
+	"github.com/jon4hz/jellysweep/internal/engine/arr"
 )
 
-func (s *Sonarr) DeleteMedia(ctx context.Context, seriesID int32, title string) error {
-	// Get the global cleanup configuration
-	cleanupMode := s.cfg.GetCleanupMode()
-	keepCount := s.cfg.GetKeepCount()
-
-	if s.cfg.DryRun {
-		log.Info("dry run: would delete Sonarr series", "title", title, "cleanupMode", cleanupMode)
-		return nil
+func (s *Sonarr) DeleteMedia(ctx context.Context, seriesID int32, title string, opts arr.DeleteOptions) error {
+	cleanupMode := config.CleanupMode(opts.CleanupMode)
+	if cleanupMode == "" {
+		cleanupMode = config.CleanupModeAll
+	}
+	keepCount := opts.KeepCount
+	if keepCount <= 0 {
+		keepCount = 1
 	}
 
 	var deletionDescription string

@@ -471,7 +471,7 @@ func itemImportedAt(item arr.MediaItem) time.Time {
 // gatherMediaItems gathers all media items from Jellyfin, Sonarr, and Radarr.
 // It merges them into a single collection grouped by library.
 func (e *Engine) gatherMediaItems(ctx context.Context) ([]arr.MediaItem, error) {
-	jellyfinItems, _, err := e.jellyfin.GetJellyfinItems(ctx)
+	jellyfinItems, err := e.jellyfin.GetJellyfinItems(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get jellyfin items: %w", err)
 	}
@@ -637,7 +637,7 @@ func (e *Engine) resetAllTags(ctx context.Context, additionalTags []string) erro
 func (e *Engine) migrateTagsToDatabase(ctx context.Context) error {
 	log.Info("Starting migration of jellysweep tags to database...")
 
-	jellyfinItems, _, err := e.jellyfin.GetJellyfinItems(ctx)
+	jellyfinItems, err := e.jellyfin.GetJellyfinItems(ctx)
 	if err != nil {
 		log.Error("Failed to get jellyfin items for migration", "error", err)
 		return err

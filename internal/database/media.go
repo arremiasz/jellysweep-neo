@@ -9,15 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// DiskUsageDeletePolicy represents the disk usage policy for media deletion.
-type DiskUsageDeletePolicy struct {
-	gorm.Model
-	MediaID    uint      `gorm:"not null;index"`
-	Threshold  float64   `gorm:"not null"` // Disk usage threshold percentage
-	DeleteDate time.Time `gorm:"not null"` // Date when media should be deleted if threshold is exceeded
-}
-
-// Media represents a media item in the database.
+// Media represents a media item tracked by Jellysweep for potential deletion.
 type Media struct {
 	gorm.Model
 	JellyfinID      string `gorm:"not null;uniqueIndex:idx_media_arr"`
@@ -34,12 +26,9 @@ type Media struct {
 	DefaultDeleteAt time.Time `gorm:"not null;index;uniqueIndex:idx_media_arr"`
 	ProtectedUntil  *time.Time
 	Unkeepable      bool
-	// Reason why this item was deleted from the database.
-	DBDeleteReason          DBDeleteReason
-	DiskUsageDeletePolicies []DiskUsageDeletePolicy `gorm:"constraint:OnDelete:CASCADE;"`
-	Request                 Request                 `gorm:"constraint:OnDelete:CASCADE;"`
+	DBDeleteReason  DBDeleteReason
+	Request         Request `gorm:"constraint:OnDelete:CASCADE;"`
 
-	// New lifetime-model fields (populated by the refactored engine in a later push):
 	// ImportedAt is the date Sonarr/Radarr added the file. Used as the lifetime origin.
 	ImportedAt time.Time `gorm:"index"`
 	// LastWatchedAt is the most recent playback timestamp from Jellystat. For shows, this resets lifetime.
@@ -63,7 +52,7 @@ func (c *Client) CreateMediaItems(ctx context.Context, mediaItems []Media) error
 
 func (c *Client) GetMediaItemByID(ctx context.Context, id uint) (*Media, error) {
 	var mediaItem Media
-	result := c.db.WithContext(ctx).Preload("DiskUsageDeletePolicies").Preload("Request").First(&mediaItem, id)
+	result := c.db.WithContext(ctx).Preload("Request").First(&mediaItem, id)
 	if result.Error != nil {
 		log.Error("failed to get media item by ID", "error", result.Error)
 		return nil, result.Error
@@ -73,9 +62,7 @@ func (c *Client) GetMediaItemByID(ctx context.Context, id uint) (*Media, error) 
 
 // GetMediaItems retrieves all unprotected media items from the database.
 func (c *Client) GetMediaItems(ctx context.Context, includeProtected bool) ([]Media, error) {
-	tx := c.db.WithContext(ctx).
-		Preload("DiskUsageDeletePolicies").
-		Preload("Request")
+	tx := c.db.WithContext(ctx).Preload("Request")
 
 	if !includeProtected {
 		tx = tx.Where("protected_until IS NULL OR protected_until < ?", time.Now())

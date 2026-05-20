@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/charmbracelet/log"
-	"gorm.io/gorm"
 
 	"github.com/jon4hz/jellysweep/internal/config"
 	"github.com/jon4hz/jellysweep/internal/database"
@@ -145,6 +144,9 @@ func seedAppFromYAML(app *database.AppSettings, cfg *config.Config) {
 	}
 }
 
+// seedLibrariesFromYAML copies each library block in the YAML config into a new
+// LibrarySettings row. Zero values fall back to the database column defaults so a
+// user can write a minimal YAML and let the DB defaults take over.
 func seedLibrariesFromYAML(ctx context.Context, db database.SettingsDB, cfg *config.Config) []database.LibrarySettings {
 	out := make([]database.LibrarySettings, 0, len(cfg.Libraries))
 	for name, lc := range cfg.Libraries {
@@ -154,10 +156,10 @@ func seedLibrariesFromYAML(ctx context.Context, db database.SettingsDB, cfg *con
 		ls := database.LibrarySettings{
 			Name:                   name,
 			Enabled:                lc.Enabled,
-			LifetimeDays:           lc.GetContentAgeThreshold(),
-			DeletionPeriodDays:     lc.GetCleanupDelay(),
-			ProtectionDays:         lc.GetProtectionPeriod(),
-			CompletionThresholdPct: 90,
+			LifetimeDays:           valueOrDefault(lc.LifetimeDays, 90),
+			DeletionPeriodDays:     valueOrDefault(lc.DeletionPeriodDays, 30),
+			ProtectionDays:         valueOrDefault(lc.ProtectionDays, 90),
+			CompletionThresholdPct: valueOrDefault(lc.CompletionThresholdPct, 90),
 		}
 		if err := db.UpsertLibrarySettings(ctx, &ls); err != nil {
 			log.Error("failed to seed library settings", "library", name, "error", err)
@@ -168,8 +170,10 @@ func seedLibrariesFromYAML(ctx context.Context, db database.SettingsDB, cfg *con
 	return out
 }
 
-// IsNotFound reports whether the given error is a GORM "record not found" error,
-// useful for callers reacting to a missing library settings row.
-func IsNotFound(err error) bool {
-	return errors.Is(err, gorm.ErrRecordNotFound)
+func valueOrDefault(v, def int) int {
+	if v <= 0 {
+		return def
+	}
+	return v
 }
+

@@ -23,7 +23,6 @@ func New(dbpath string) (*Client, error) {
 
 	if err := db.AutoMigrate(
 		&Media{},
-		&DiskUsageDeletePolicy{},
 		&Request{},
 		&User{},
 		&UserSettings{},
