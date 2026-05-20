@@ -34,14 +34,17 @@ func (e *Engine) Close() error {
 }
 
 // setupJobs configures all scheduled jobs.
+//
+// The cleanup schedule is read once at engine startup from the settings store.
+// Changing it in the UI persists, but takes effect after a restart.
 func (e *Engine) setupJobs() error {
-	// Add cleanup job as singleton (only one instance can run at a time)
-	cleanupJobDef := gocron.CronJob(e.cfg.CleanupSchedule, false)
+	schedule := e.settings.App().CleanupSchedule
+	cleanupJobDef := gocron.CronJob(schedule, false)
 	if err := e.scheduler.AddSingletonJob(
 		"cleanup",
 		"Media Cleanup",
 		"Runs the cleanup loop",
-		e.cfg.CleanupSchedule,
+		schedule,
 		cleanupJobDef,
 		e.runCleanupJob,
 		true,

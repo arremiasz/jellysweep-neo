@@ -26,38 +26,26 @@ jellysweep/
 │   ├── cache/                     # Image cache + engine data cache
 │   ├── config/                    # Viper-based config loading & validation
 │   ├── database/                  # GORM/SQLite models, queries, interface
-│   ├── engine/                    # Core business logic
+│   ├── engine/                    # Core business logic (sweep + cleanup)
 │   │   ├── arr/                   # Sonarr/Radarr integration
 │   │   │   ├── sonarr/
 │   │   │   └── radarr/
 │   │   ├── jellyfin/              # Jellyfin API client
-│   │   └── stats/                 # Viewing stats providers
-│   │       ├── jellystat/
-│   │       └── streamystats/
-│   ├── filter/                    # Filterer interface + per-library filters
-│   │   ├── age_filter/
-│   │   ├── database_filter/
-│   │   ├── series_filter/
-│   │   ├── size_filter/
-│   │   ├── stream_filter/
-│   │   ├── tags_filter/
-│   │   └── tunarr_filter/
+│   │   └── stats/                 # Viewing stats provider (Jellystat)
+│   │       └── jellystat/
 │   ├── gravatar/                  # Gravatar profile picture support
 │   ├── logging/                   # Log level setup
 │   ├── notify/
 │   │   ├── email/                 # SMTP email notifications
 │   │   └── webpush/               # Web push (VAPID) notifications
-│   ├── policy/                    # Deletion policy engine
-│   │   ├── default.go
-│   │   └── disk_usage.go
 │   ├── scheduler/                 # gocron-based task scheduler
+│   ├── settings/                  # In-memory settings store backed by the DB
 │   ├── static/                    # Embedded static assets (fs.FS)
 │   ├── tags/                      # Sonarr/Radarr tag management
 │   └── version/                   # Build version string
 ├── pkg/                           # Reusable external-service clients
 │   ├── jellyseerr/                # Jellyseerr API client
 │   ├── jellystat/                 # Jellystat API client
-│   ├── streamystats/              # Streamystats API client
 │   └── tunarr/                    # Tunarr API client
 ├── web/templates/                 # a-h/templ templates
 │   ├── layout.templ               # Base HTML layout
@@ -135,34 +123,32 @@ docker compose -f compose.dev.yml up
 ### Engine (`internal/engine/`)
 
 The engine is the central coordinator. It owns:
-- Service clients (Sonarr, Radarr, Jellyfin, Jellystat/Streamystats, Jellyseerr, Tunarr)
-- The policy engine (`internal/policy/`)
-- The filter chain (`internal/filter/`)
+- Service clients (Sonarr, Radarr, Jellyfin, Jellystat, Jellyseerr, Tunarr)
+- The settings store (`internal/settings/`) — live, UI-editable values
 - The database client
 - Notification clients (email, webpush, ntfy)
 - Cache instances
 
-The main scan-and-mark cycle runs on a cron schedule. The cleanup phase (`cleanupMedia`) checks policy then deletes via Sonarr/Radarr and Jellyfin.
+The main scan-and-mark cycle runs on a cron schedule. Each cycle: gather items from Sonarr/Radarr → decide which to queue using the lifetime model in `shouldQueue` → save to DB with `QueuedAt` set → on a later cycle, `cleanupMedia` deletes items whose grace period (`QueuedAt + DeletionPeriodDays`) has elapsed.
 
-### Filter system (`internal/filter/`)
+### Deletion model (`internal/engine/engine.go`)
 
-All filters implement `Filterer`:
-```go
-type Filterer interface {
-    fmt.Stringer
-    Apply(context.Context, []arr.MediaItem) ([]arr.MediaItem, error)
-}
-```
+There is no filter chain or policy engine. Queue eligibility is decided inline by `shouldQueue`:
 
-`filter.Filter.ApplyAll()` applies filters sequentially; any filter can exclude an item from consideration. Filters run **before** items are tagged/tracked. Once an item is in the database (marked for deletion), filters no longer apply to it.
+- **Movies** are queued when either (a) `now - importedAt >= LifetimeDays` or (b) the sum of recorded Jellystat playback sessions reaches `CompletionThresholdPct` of the movie's runtime. The played-sum is capped at runtime so re-watches don't skew the percentage.
+- **Shows** are queued only when `now - max(importedAt, lastWatched) >= LifetimeDays`. Any episode watched after queueing un-queues the show via `unqueueWatchedShows`.
 
-### Policy engine (`internal/policy/`)
+Actual on-disk deletion happens when `now > DefaultDeleteAt`, where `DefaultDeleteAt = QueuedAt + library.DeletionPeriodDays`. Keep-request approval extends `ProtectedUntil` and pauses the timer.
 
-Policies implement `Policy` and determine **when** a tracked item should actually be deleted (respecting grace periods and disk usage thresholds). Policies run **after** items are in the database.
+### Settings (`internal/settings/`)
+
+`settings.Store` owns the runtime, UI-editable settings (global + per-library). On first startup the store seeds itself from the YAML config; after that the database is the source of truth. All engine code that needs a setting goes through `e.settings.App()` / `e.settings.Library(name)` rather than `e.cfg`. Admins edit settings via `/admin/settings`.
+
+Most settings apply on the next sweep with no restart needed. The cleanup cron schedule is the exception — the scheduler reads it once at engine startup, so a restart is required to pick up a new schedule.
 
 ### Database interface (`internal/database/interface.go`)
 
-The `DB` interface composes four sub-interfaces: `UserDB`, `MediaDB`, `RequestDB`, `HistoryDB`. The concrete implementation is `database.Client` (GORM + SQLite). Tests should mock the `DB` interface.
+The `DB` interface composes sub-interfaces: `UserDB`, `MediaDB`, `RequestDB`, `HistoryDB`, `SettingsDB`. The concrete implementation is `database.Client` (GORM + SQLite). Tests should mock the `DB` interface.
 
 ### Authentication (`internal/api/auth/`)
 
@@ -174,7 +160,7 @@ Templates are written in `.templ` files and compiled to `*_templ.go` by `go tool
 
 ### Configuration (`internal/config/`)
 
-Uses Viper with `JELLYSWEEP_` env prefix. Library-specific config (filters, thresholds) **cannot** be set via env vars — it requires a YAML config file. Library name lookup is case-insensitive (handled by `GetLibraryConfig()`). Struct tags must have both `yaml:` and `mapstructure:` annotations.
+Uses Viper with `JELLYSWEEP_` env prefix. The YAML config is consulted for bootstrap-only values (service URLs, API keys, session_key, OIDC client secret, VAPID keys) and is used to seed the settings DB on first run. Library blocks in YAML seed per-library settings into the DB once; after that the UI is authoritative and YAML changes to those blocks are ignored. Struct tags must have both `yaml:` and `mapstructure:` annotations.
 
 ---
 
@@ -257,11 +243,9 @@ CI skips on changes to `docs/**`, `**.md`, and `zensical.toml`.
 
 ---
 
-## Adding a New Filter
+## Changing Queue Eligibility
 
-1. Create `internal/filter/<name>_filter/filter.go`
-2. Implement `filter.Filterer` interface
-3. Wire the filter into the engine's filter chain (in `internal/engine/`)
+There is no filter framework. Queue eligibility lives in `shouldQueue` inside `internal/engine/engine.go`. Add another condition there (and make sure the resulting `queueDecision.reason` is a string the UI can render).
 
 ## Adding a New Notification Provider
 
@@ -286,14 +270,26 @@ CI skips on changes to `docs/**`, `**.md`, and `zensical.toml`.
 
 ## Configuration Reference
 
-The app uses YAML config + `JELLYSWEEP_*` env vars (env vars override file values). Library config requires the YAML file.
+The YAML config is consulted for bootstrap-only values and to seed the settings database on first run. Once seeded, the `/admin/settings` UI is the source of truth for everything except secrets and infrastructure values.
 
 Key required fields:
 - `session_key` — random string (`openssl rand -base64 32`)
 - `jellyfin.url` + `jellyfin.api_key`
+- `jellystat.url` + `jellystat.api_key`
 - Either `sonarr` or `radarr` (or both)
-- Either `jellystat` or `streamystats` (not both)
 - At least one auth method (`auth.oidc` or `auth.jellyfin`)
-- At least one `libraries` entry matching a Jellyfin library name exactly
+- At least one `libraries` entry matching a Jellyfin library name exactly (only used to seed initial per-library settings on first run)
 
-Default port: `0.0.0.0:3002`. Default cleanup schedule: every 12 hours (`0 */12 * * *`). `dry_run` defaults to `true` — set to `false` for actual deletions.
+Per-library YAML block (seed-only):
+
+```yaml
+libraries:
+  Movies:
+    enabled: true
+    lifetime_days: 90
+    deletion_period_days: 30
+    protection_days: 90
+    completion_threshold_pct: 90
+```
+
+Default port: `0.0.0.0:3002`. Default cleanup schedule: every 12 hours (`0 */12 * * *`). `dry_run` defaults to `true`. Changing the cleanup schedule via the UI requires a restart; everything else takes effect on the next sweep.

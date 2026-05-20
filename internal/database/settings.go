@@ -13,7 +13,7 @@ import (
 // Exactly one row exists; ID is always 1.
 type AppSettings struct {
 	gorm.Model
-	// DryRun mirrors the legacy cfg.DryRun: if true, deletions are not executed.
+	// DryRun gates actual deletions: when true, the engine logs what it would do but performs no destructive calls.
 	DryRun bool `gorm:"not null;default:true"`
 	// CleanupSchedule is the cron expression for the cleanup job.
 	CleanupSchedule string `gorm:"not null"`

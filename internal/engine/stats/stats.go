@@ -13,8 +13,6 @@ type WatchInfo struct {
 	// For movies, callers compare TotalPlayed against the item's runtime to compute a
 	// completion percentage; the value is capped at runtime by the caller.
 	TotalPlayed time.Duration
-	// MaxSessionDuration is the longest single playback session recorded.
-	MaxSessionDuration time.Duration
 	// SessionCount is the number of recorded playback sessions.
 	SessionCount int
 }

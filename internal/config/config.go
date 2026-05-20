@@ -214,51 +214,19 @@ type WebPushConfig struct {
 	Timeout int `yaml:"timeout" mapstructure:"timeout"`
 }
 
-// CleanupConfig holds the configuration for the cleanup job.
+// CleanupConfig is the YAML shape used to seed a library's settings into the database on first run.
+// After the first run the database is authoritative; further YAML changes are ignored.
 type CleanupConfig struct {
-	// Enabled indicates whether the cleanup job is enabled.
+	// Enabled controls whether this library is swept at all.
 	Enabled bool `yaml:"enabled" mapstructure:"enabled"`
-	// CleanupDelay is the delay in days before a media item is deleted after being marked for deletion.
-	CleanupDelay int `yaml:"cleanup_delay" mapstructure:"cleanup_delay"`
-	// DiskUsageThresholds is a list of disk usage thresholds for cleanup.
-	DiskUsageThresholds []DiskUsageThreshold `yaml:"disk_usage_thresholds" mapstructure:"disk_usage_thresholds"`
-	// ProtectionPeriod is the number of days to protect requested media from cleanup.
-	ProtectionPeriod int `yaml:"protection_period" mapstructure:"protection_period"`
-	// ContentAgeThreshold is the minimum age in days for content (since it was first imported) to be eligible for cleanup.
-	// Deprecated: use filter.content_age_threshold instead.
-	ContentAgeThreshold int `yaml:"content_age_threshold" mapstructure:"content_age_threshold"`
-	// LastStreamThreshold is the minimum time in days since the last stream for content to be eligible for cleanup.
-	// Deprecated: use filter.last_stream_threshold instead.
-	LastStreamThreshold int `yaml:"last_stream_threshold" mapstructure:"last_stream_threshold"`
-	// ContentSizeThreshold is the minimum size in bytes for content to be eligible for cleanup.
-	// Deprecated: use filter.content_size_threshold instead.
-	ContentSizeThreshold int64 `yaml:"content_size_threshold" mapstructure:"content_size_threshold"`
-	// ExcludeTags is a list of tags to exclude from deletion.
-	// Deprecated: use filter.exclude_tags instead.
-	ExcludeTags []string `yaml:"exclude_tags" mapstructure:"exclude_tags"`
-	// Filter is the configuration for all available filters.
-	Filter FilterConfig `yaml:"filter" mapstructure:"filter"`
-}
-
-type FilterConfig struct {
-	// ContentAgeThreshold is the minimum age in days for content (since it was first imported) to be eligible for cleanup.
-	ContentAgeThreshold int `yaml:"content_age_threshold" mapstructure:"content_age_threshold"`
-	// LastStreamThreshold is the minimum time in days since the last stream for content to be eligible for cleanup.
-	LastStreamThreshold int `yaml:"last_stream_threshold" mapstructure:"last_stream_threshold"`
-	// ContentSizeThreshold is the minimum size in bytes for content to be eligible for cleanup.
-	ContentSizeThreshold int64 `yaml:"content_size_threshold" mapstructure:"content_size_threshold"`
-	// ExcludeTags is a list of tags to exclude from deletion.
-	ExcludeTags []string `yaml:"exclude_tags" mapstructure:"exclude_tags"`
-	// TunarrEnabled enables the Tunarr filter for this library to protect items used in Tunarr channels.
-	TunarrEnabled bool `yaml:"tunarr_enabled" mapstructure:"tunarr_enabled"`
-}
-
-// DiskUsageThreshold holds the disk usage thresholds for cleanup.
-type DiskUsageThreshold struct {
-	// UsagePercent is the disk usage percentage threshold.
-	UsagePercent float64 `yaml:"usage_percent" mapstructure:"usage_percent"`
-	// MaxCleanupDelay is the cleanup delay in days when this threshold is reached.
-	MaxCleanupDelay int `yaml:"max_cleanup_delay" mapstructure:"max_cleanup_delay"`
+	// LifetimeDays is the number of days from import-date before a movie/show is auto-queued for deletion.
+	LifetimeDays int `yaml:"lifetime_days" mapstructure:"lifetime_days"`
+	// DeletionPeriodDays is the grace period (in days) between queueing and actual deletion.
+	DeletionPeriodDays int `yaml:"deletion_period_days" mapstructure:"deletion_period_days"`
+	// ProtectionDays is the number of days an item stays protected after a keep request is approved.
+	ProtectionDays int `yaml:"protection_days" mapstructure:"protection_days"`
+	// CompletionThresholdPct is the playback-progress percent that counts as "watched" for movies (1-100).
+	CompletionThresholdPct int `yaml:"completion_threshold_pct" mapstructure:"completion_threshold_pct"`
 }
 
 // CacheConfig holds the configuration for the cache engine.
@@ -395,9 +363,6 @@ func Load(path string) (*Config, error) {
 
 	// Sanitize config values
 	sanitizeConfig(&c)
-
-	// Warn about deprecated configuration options
-	warnDeprecatedConfig(&c)
 
 	// Validate required configs
 	if err := validateConfig(&c); err != nil {
@@ -734,151 +699,4 @@ func sanitizeConfig(c *Config) {
 
 func urlSanitize(url string) string {
 	return strings.TrimSuffix(strings.TrimSpace(url), "/")
-}
-
-// warnDeprecatedConfig logs warnings for any deprecated configuration options that are in use.
-func warnDeprecatedConfig(c *Config) {
-	if c == nil || c.Libraries == nil {
-		return
-	}
-
-	for libraryName, libraryConfig := range c.Libraries {
-		if libraryConfig == nil {
-			continue
-		}
-
-		// Check for deprecated ContentAgeThreshold
-		if libraryConfig.ContentAgeThreshold > 0 {
-			log.Warn("'content_age_threshold' is deprecated, please use 'filter.content_age_threshold' instead", "library", libraryName)
-		}
-
-		// Check for deprecated LastStreamThreshold
-		if libraryConfig.LastStreamThreshold > 0 {
-			log.Warn("'last_stream_threshold' is deprecated, please use 'filter.last_stream_threshold' instead", "library", libraryName)
-		}
-
-		// Check for deprecated ContentSizeThreshold
-		if libraryConfig.ContentSizeThreshold > 0 {
-			log.Warn("'content_size_threshold' is deprecated, please use 'filter.content_size_threshold' instead", "library", libraryName)
-		}
-
-		// Check for deprecated ExcludeTags
-		if len(libraryConfig.ExcludeTags) > 0 {
-			log.Warn("'exclude_tags' is deprecated, please use 'filter.exclude_tags' instead", "library", libraryName)
-		}
-	}
-}
-
-// GetLibraryConfig returns the cleanup configuration for a specific library.
-// This function handles the case-sensitivity issue where viper normalizes map keys
-// to lowercase, but library names from Jellystat are case-sensitive.
-func (c *Config) GetLibraryConfig(libraryName string) *CleanupConfig {
-	if c.Libraries == nil {
-		return nil
-	}
-
-	libraryNameLower := strings.ToLower(libraryName)
-	for key, config := range c.Libraries {
-		if strings.ToLower(key) == libraryNameLower {
-			return config
-		}
-	}
-
-	return nil
-}
-
-// GetCleanupMode returns the cleanup mode with proper defaults.
-func (c *Config) GetCleanupMode() CleanupMode {
-	if c == nil || c.CleanupMode == "" {
-		return "all" // Default mode
-	}
-	return c.CleanupMode
-}
-
-// GetKeepCount returns the keep count with proper defaults.
-func (c *Config) GetKeepCount() int {
-	if c == nil || c.KeepCount <= 0 {
-		return 1 // Default to keeping 1 episode/season
-	}
-	return c.KeepCount
-}
-
-// GetContentAgeThreshold returns the content age threshold with proper defaults.
-// It first checks the new Filter.ContentAgeThreshold field, and falls back to the
-// deprecated ContentAgeThreshold field if the new field is not set.
-func (c *CleanupConfig) GetContentAgeThreshold() int {
-	// Prefer the new filter configuration
-	if c.Filter.ContentAgeThreshold > 0 {
-		return c.Filter.ContentAgeThreshold
-	}
-	// Fallback to deprecated field
-	if c.ContentAgeThreshold > 0 {
-		return c.ContentAgeThreshold
-	}
-	// Default value
-	return 30 // Default to 30 days
-}
-
-// GetLastStreamThreshold returns the last stream threshold with proper defaults.
-// It first checks the new Filter.LastStreamThreshold field, and falls back to the
-// deprecated LastStreamThreshold field if the new field is not set.
-func (c *CleanupConfig) GetLastStreamThreshold() int {
-	// Prefer the new filter configuration
-	if c.Filter.LastStreamThreshold > 0 {
-		return c.Filter.LastStreamThreshold
-	}
-	// Fallback to deprecated field
-	if c.LastStreamThreshold > 0 {
-		return c.LastStreamThreshold
-	}
-	// Default value
-	return 30 // Default to 30 days
-}
-
-// GetContentSizeThreshold returns the content size threshold with proper defaults.
-// It first checks the new Filter.ContentSizeThreshold field, and falls back to the
-// deprecated ContentSizeThreshold field if the new field is not set.
-func (c *CleanupConfig) GetContentSizeThreshold() int64 {
-	// Prefer the new filter configuration
-	if c.Filter.ContentSizeThreshold > 0 {
-		return c.Filter.ContentSizeThreshold
-	}
-	// Fallback to deprecated field
-	if c.ContentSizeThreshold > 0 {
-		return c.ContentSizeThreshold
-	}
-	// Default value
-	return 0 // Default to 0 bytes (no size threshold)
-}
-
-// GetCleanupDelay returns the cleanup delay with proper defaults.
-func (c *CleanupConfig) GetCleanupDelay() int {
-	if c.CleanupDelay <= 0 {
-		return 30 // Default to 30 days delay
-	}
-	return c.CleanupDelay
-}
-
-// GetProtectionPeriod returns the protection period with proper defaults.
-func (c *CleanupConfig) GetProtectionPeriod() int {
-	if c.ProtectionPeriod <= 0 {
-		return 90 // Default to 90 days protection
-	}
-	return c.ProtectionPeriod
-}
-
-// GetExcludeTags returns the list of tags to exclude from deletion.
-// It first checks the new Filter.ExcludeTags field, and falls back to the
-// deprecated ExcludeTags field if the new field is not set.
-func (c *CleanupConfig) GetExcludeTags() []string {
-	// Prefer the new filter configuration
-	if len(c.Filter.ExcludeTags) > 0 {
-		return c.Filter.ExcludeTags
-	}
-	// Fallback to deprecated field
-	if len(c.ExcludeTags) > 0 {
-		return c.ExcludeTags
-	}
-	// Default value
-	return []string{} // Default to empty list
 }

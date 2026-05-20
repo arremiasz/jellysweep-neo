@@ -67,14 +67,13 @@ type ItemHistoryResponse struct {
 
 // LastPlayedInfo contains information about when an item was last played.
 type LastPlayedInfo struct {
-	ItemID             string
-	ItemName           string
-	ItemType           string
-	LastPlayed         *time.Time
-	LastUser           string
-	PlayCount          int
-	TotalRuntime       int64
-	MaxSessionDuration int64 // longest single playback session, in seconds
+	ItemID       string
+	ItemName     string
+	ItemType     string
+	LastPlayed   *time.Time
+	LastUser     string
+	PlayCount    int
+	TotalRuntime int64 // sum of all recorded playback session durations, in seconds
 }
 
 // LibraryMetadata represents metadata for a library.
@@ -205,12 +204,9 @@ func (c *Client) GetLastPlayed(ctx context.Context, itemID string) (*LastPlayedI
 		info.LastUser = recent.UserName
 		info.ItemName = recent.NowPlayingItemName
 
-		// Calculate total runtime + longest single session across all plays.
+		// Sum playback durations across all sessions.
 		for _, play := range history.Results {
 			info.TotalRuntime += play.PlaybackDuration
-			if play.PlaybackDuration > info.MaxSessionDuration {
-				info.MaxSessionDuration = play.PlaybackDuration
-			}
 		}
 	}
 

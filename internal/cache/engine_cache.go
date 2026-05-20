@@ -18,12 +18,6 @@ type JellyfinItem struct {
 	ParentLibraryName string `json:"parentLibraryName,omitempty"`
 }
 
-// JellyfinItemsData contains cached Jellyfin items and library folder mappings.
-type JellyfinItemsData struct {
-	Items             []JellyfinItem      `json:"items"`
-	LibraryFoldersMap map[string][]string `json:"libraryFoldersMap"`
-}
-
 // Cache key prefixes.
 const (
 	JellyfinItemsCachePrefix = "jellyfin-items-"

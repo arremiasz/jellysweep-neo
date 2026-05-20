@@ -26,9 +26,17 @@ type MediaItem struct {
 	RequestedBy string // User email or username
 }
 
+// DeleteOptions controls how an item is removed from Sonarr/Radarr.
+// Radarr ignores the options; Sonarr consults CleanupMode + KeepCount to
+// optionally retain a prefix of episodes/seasons rather than the whole series.
+type DeleteOptions struct {
+	CleanupMode string
+	KeepCount   int
+}
+
 type Arrer interface {
 	GetItems(ctx context.Context, jellyfinItems []JellyfinItem) ([]MediaItem, error)
-	DeleteMedia(ctx context.Context, arrID int32, title string) error
+	DeleteMedia(ctx context.Context, arrID int32, title string, opts DeleteOptions) error
 
 	// Bulk tag resets/cleanup
 	ResetTags(ctx context.Context, additionalTags []string) error

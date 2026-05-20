@@ -9,6 +9,7 @@ import (
 	"github.com/jon4hz/jellysweep/internal/api/models"
 	"github.com/jon4hz/jellysweep/internal/database"
 	"github.com/jon4hz/jellysweep/web/templates/pages"
+	"github.com/robfig/cron/v3"
 )
 
 type appSettingsRequest struct {
@@ -70,6 +71,10 @@ func (h *AdminHandler) GetSettings(c *gin.Context) {
 	})
 }
 
+// cronParser accepts the 5-field cron expressions used elsewhere in the project
+// (gocron is configured the same way).
+var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+
 // UpdateAppSettings saves the global settings.
 func (h *AdminHandler) UpdateAppSettings(c *gin.Context) {
 	var req appSettingsRequest
@@ -77,9 +82,14 @@ func (h *AdminHandler) UpdateAppSettings(c *gin.Context) {
 		jsonError(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	schedule := strings.TrimSpace(req.CleanupSchedule)
+	if _, err := cronParser.Parse(schedule); err != nil {
+		jsonError(c, http.StatusBadRequest, "invalid cron schedule: "+err.Error())
+		return
+	}
 	current := h.settings.App()
 	current.DryRun = req.DryRun
-	current.CleanupSchedule = strings.TrimSpace(req.CleanupSchedule)
+	current.CleanupSchedule = schedule
 	current.LeavingCollectionsEnabled = req.LeavingCollectionsEnabled
 	current.LeavingCollectionsMovieName = strings.TrimSpace(req.LeavingCollectionsMovieName)
 	current.LeavingCollectionsTVName = strings.TrimSpace(req.LeavingCollectionsTVName)
