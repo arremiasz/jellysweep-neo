@@ -13,17 +13,27 @@ import (
 	jellyfin "github.com/sj14/jellyfin-go/api"
 )
 
+// LibraryEnabledFunc reports whether a library is enabled for sweeping.
+// Returning false causes the jellyfin client to skip the library entirely.
+type LibraryEnabledFunc func(libraryName string) bool
+
 // Client provides a high-level interface for interacting with Jellyfin.
 type Client struct {
-	jellyfin *jellyfin.APIClient
-	cfg      *config.Config
+	jellyfin       *jellyfin.APIClient
+	cfg            *config.Config
+	libraryEnabled LibraryEnabledFunc
 }
 
-// New creates a new Jellyfin client with the given configuration and cache.
-func New(cfg *config.Config) *Client {
+// New creates a new Jellyfin client. The provided libraryEnabled callback is consulted
+// when listing libraries; disabled libraries are skipped.
+func New(cfg *config.Config, libraryEnabled LibraryEnabledFunc) *Client {
+	if libraryEnabled == nil {
+		libraryEnabled = func(string) bool { return true }
+	}
 	return &Client{
-		jellyfin: newJellyfinClient(cfg.Jellyfin),
-		cfg:      cfg,
+		jellyfin:       newJellyfinClient(cfg.Jellyfin),
+		cfg:            cfg,
+		libraryEnabled: libraryEnabled,
 	}
 }
 
@@ -76,8 +86,7 @@ func (c *Client) GetLibraryFoldersMap(ctx context.Context) (map[string][]string,
 	for _, folder := range virtualFolders {
 		log.Debug("Found virtual folder", "name", folder.GetName())
 		libraryName := folder.GetName()
-		libraryConfig := c.cfg.GetLibraryConfig(libraryName)
-		if libraryConfig == nil || !libraryConfig.Enabled {
+		if !c.libraryEnabled(libraryName) {
 			log.Debug("Skipping virtual folder for disabled library", "library", libraryName)
 			continue
 		}
@@ -113,9 +122,7 @@ func (c *Client) fetchJellyfinItems(ctx context.Context) ([]arr.JellyfinItem, er
 		libraryName := folder.GetName()
 		libraryID := folder.GetId()
 
-		// Check if this library is enabled in the configuration
-		libraryConfig := c.cfg.GetLibraryConfig(libraryName)
-		if libraryConfig == nil || !libraryConfig.Enabled {
+		if !c.libraryEnabled(libraryName) {
 			log.Debug("Skipping disabled library", "library", libraryName)
 			continue
 		}

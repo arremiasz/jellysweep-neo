@@ -52,9 +52,8 @@ func startServer(cmd *cobra.Command, _ []string) {
 	if err != nil {
 		log.Fatal("failed to initialize settings store", "error", err)
 	}
-	_ = settingsStore // wired into engine and API in subsequent pushes
 
-	engine, err := engine.New(cfg, db, !exists)
+	engine, err := engine.New(cfg, db, settingsStore, !exists)
 	if err != nil {
 		log.Fatal("failed to create engine", "error", err)
 	}

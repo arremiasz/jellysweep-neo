@@ -39,19 +39,16 @@ func (e *Engine) sendEmailNotifications() {
 			})
 		}
 
-		// Calculate cleanup date (current time + cleanup delay)
+		// Estimated on-disk deletion date = now + library.DeletionPeriodDays of the first matching item.
 		cleanupDate := time.Now()
-		if len(mediaItems) > 0 {
-			// Use the cleanup delay from the first item's library
-			for _, item := range mediaItems {
-				if item.RequestedBy == userEmail {
-					libraryConfig := e.cfg.GetLibraryConfig(item.LibraryName)
-					if libraryConfig != nil {
-						cleanupDate = cleanupDate.Add(time.Duration(libraryConfig.GetCleanupDelay()) * 24 * time.Hour)
-					}
-					break
-				}
+		for _, item := range mediaItems {
+			if item.RequestedBy != userEmail {
+				continue
 			}
+			if libCfg, ok := e.settings.Library(item.LibraryName); ok {
+				cleanupDate = cleanupDate.Add(time.Duration(libCfg.DeletionPeriodDays) * 24 * time.Hour)
+			}
+			break
 		}
 
 		notification := email.UserNotification{
@@ -59,7 +56,7 @@ func (e *Engine) sendEmailNotifications() {
 			UserName:      userEmail, // Use email as name for now, could be enhanced
 			MediaItems:    emailMediaItems,
 			CleanupDate:   cleanupDate,
-			DryRun:        e.cfg.DryRun,
+			DryRun:        e.settings.App().DryRun,
 			JellysweepURL: e.cfg.ServerURL,
 		}
 

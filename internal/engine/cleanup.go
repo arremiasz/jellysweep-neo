@@ -2,16 +2,33 @@ package engine
 
 import (
 	"context"
+	"time"
 
 	"github.com/charmbracelet/log"
 	"github.com/jon4hz/jellysweep/internal/api/models"
+	"github.com/jon4hz/jellysweep/internal/config"
 	"github.com/jon4hz/jellysweep/internal/database"
 	"github.com/jon4hz/jellysweep/internal/engine/arr"
 	jellyfin "github.com/sj14/jellyfin-go/api"
 )
 
+// readyToDelete reports whether a queued item has passed its grace period and is
+// not currently protected by a keep request.
+func readyToDelete(item database.Media, now time.Time) bool {
+	if item.ProtectedUntil != nil && item.ProtectedUntil.After(now) {
+		return false
+	}
+	if item.QueuedAt == nil {
+		// Legacy rows that pre-date the queue model: fall back to DefaultDeleteAt.
+		return !item.DefaultDeleteAt.IsZero() && now.After(item.DefaultDeleteAt)
+	}
+	return now.After(item.DefaultDeleteAt) && !item.DefaultDeleteAt.IsZero()
+}
+
 func (e *Engine) cleanupMedia(ctx context.Context) error {
 	deletedItems := make(map[string][]arr.MediaItem)
+	now := time.Now()
+	app := e.settings.App()
 
 	mediaItems, err := e.db.GetMediaItems(ctx, false)
 	if err != nil {
@@ -20,16 +37,12 @@ func (e *Engine) cleanupMedia(ctx context.Context) error {
 	}
 
 	for _, item := range mediaItems {
-		// since the deletion policies were already set during the scaning phase, we can just use the existing policy engine.
-		if ok, err := e.policy.ShouldTriggerDeletion(ctx, item); err != nil {
-			log.Error("failed to check deletion policy for media item", "title", item.Title, "error", err)
-			continue
-		} else if !ok {
-			log.Info("skipping deletion for media item, no policies triggered", "title", item.Title)
+		if !readyToDelete(item, now) {
+			log.Debug("skipping deletion, grace period not yet elapsed", "title", item.Title, "deleteAt", item.DefaultDeleteAt)
 			continue
 		}
 
-		if e.cfg.DryRun {
+		if app.DryRun {
 			log.Info("[Dry Run] Would delete media item", "title", item.Title, "library", item.LibraryName)
 			continue
 		}
@@ -118,11 +131,17 @@ func (e *Engine) removeJellyfinItem(ctx context.Context, item database.Media) er
 		return nil
 	}
 
-	// Use the new cleanup engine that respects cleanup modes
-	cleanupMode := e.cfg.GetCleanupMode()
-	keepCount := e.cfg.GetKeepCount()
+	app := e.settings.App()
+	mode := app.CleanupMode
+	if mode == "" {
+		mode = "all"
+	}
+	keepCount := app.KeepCount
+	if keepCount <= 0 {
+		keepCount = 1
+	}
 
-	if err := e.jellyfin.RemoveItemWithCleanupMode(ctx, item.JellyfinID, item.Title, itemType, cleanupMode, keepCount); err != nil {
+	if err := e.jellyfin.RemoveItemWithCleanupMode(ctx, item.JellyfinID, item.Title, itemType, config.CleanupMode(mode), keepCount); err != nil {
 		log.Error("failed to remove jellyfin item", "jellyfinID", item.JellyfinID, "error", err)
 		return err
 	}

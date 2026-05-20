@@ -34,6 +34,7 @@ func (s *jellystatClient) GetWatchInfo(ctx context.Context, jellyfinID string) (
 		out.LastPlayed = *info.LastPlayed
 	}
 	out.SessionCount = info.PlayCount
+	out.TotalPlayed = time.Duration(info.TotalRuntime) * time.Second
 	out.MaxSessionDuration = time.Duration(info.MaxSessionDuration) * time.Second
 	return out, nil
 }
