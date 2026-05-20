@@ -110,13 +110,13 @@ func (e *Engine) HandleKeepRequest(ctx context.Context, userID, mediaID uint, ac
 	}
 
 	if accept {
-		libraryConfig := e.cfg.GetLibraryConfig(media.LibraryName)
-		if libraryConfig == nil {
-			log.Error("library config not found", "library", media.LibraryName)
-			return fmt.Errorf("library config not found for library: %s", media.LibraryName)
+		libCfg, ok := e.settings.Library(media.LibraryName)
+		if !ok {
+			log.Error("library settings not found", "library", media.LibraryName)
+			return fmt.Errorf("library settings not found for library: %s", media.LibraryName)
 		}
 
-		protectedUntil := time.Now().Add(time.Hour * 24 * time.Duration(libraryConfig.GetProtectionPeriod()))
+		protectedUntil := time.Now().Add(time.Hour * 24 * time.Duration(libCfg.ProtectionDays))
 		err = e.db.SetMediaProtectedUntil(ctx, media.ID, &protectedUntil)
 		if err != nil {
 			log.Error("failed to set media protected until in database", "mediaID", media.ID, "error", err)
@@ -216,13 +216,13 @@ func (e *Engine) MarkMediaAsProtected(ctx context.Context, mediaID uint, adminID
 		return fmt.Errorf("database error: %w", err)
 	}
 
-	libraryConfig := e.cfg.GetLibraryConfig(media.LibraryName)
-	if libraryConfig == nil {
-		log.Error("No library configuration found", "library", media.LibraryName)
-		return fmt.Errorf("no library configuration found")
+	libCfg, ok := e.settings.Library(media.LibraryName)
+	if !ok {
+		log.Error("No library settings found", "library", media.LibraryName)
+		return fmt.Errorf("no library settings found")
 	}
 
-	protectedUntil := time.Now().Add(time.Hour * 24 * time.Duration(libraryConfig.GetProtectionPeriod()))
+	protectedUntil := time.Now().Add(time.Hour * 24 * time.Duration(libCfg.ProtectionDays))
 	if err := e.db.SetMediaProtectedUntil(ctx, media.ID, &protectedUntil); err != nil {
 		log.Error("Failed to set media protected until", "mediaID", mediaID, "error", err)
 		return fmt.Errorf("failed to set media protected until: %w", err)

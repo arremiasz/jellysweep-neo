@@ -9,8 +9,11 @@ import (
 type WatchInfo struct {
 	// LastPlayed is the timestamp of the most recent playback session, or zero if never played.
 	LastPlayed time.Time
+	// TotalPlayed is the sum of all recorded playback session durations for this item.
+	// For movies, callers compare TotalPlayed against the item's runtime to compute a
+	// completion percentage; the value is capped at runtime by the caller.
+	TotalPlayed time.Duration
 	// MaxSessionDuration is the longest single playback session recorded.
-	// For movies it is compared against the item's runtime to compute a completion percentage.
 	MaxSessionDuration time.Duration
 	// SessionCount is the number of recorded playback sessions.
 	SessionCount int

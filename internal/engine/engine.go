@@ -19,19 +19,11 @@ import (
 	"github.com/jon4hz/jellysweep/internal/engine/jellyfin"
 	"github.com/jon4hz/jellysweep/internal/engine/stats"
 	"github.com/jon4hz/jellysweep/internal/engine/stats/jellystat"
-	"github.com/jon4hz/jellysweep/internal/filter"
-	agefilter "github.com/jon4hz/jellysweep/internal/filter/age_filter"
-	databasefilter "github.com/jon4hz/jellysweep/internal/filter/database_filter"
-	seriesfilter "github.com/jon4hz/jellysweep/internal/filter/series_filter"
-	sizefilter "github.com/jon4hz/jellysweep/internal/filter/size_filter"
-	streamfilter "github.com/jon4hz/jellysweep/internal/filter/stream_filter"
-	tagsfilter "github.com/jon4hz/jellysweep/internal/filter/tags_filter"
-	tunarrfilter "github.com/jon4hz/jellysweep/internal/filter/tunarr_filter"
 	"github.com/jon4hz/jellysweep/internal/notify/email"
 	"github.com/jon4hz/jellysweep/internal/notify/ntfy"
 	"github.com/jon4hz/jellysweep/internal/notify/webpush"
-	"github.com/jon4hz/jellysweep/internal/policy"
 	"github.com/jon4hz/jellysweep/internal/scheduler"
+	"github.com/jon4hz/jellysweep/internal/settings"
 	"github.com/jon4hz/jellysweep/internal/tags"
 	"github.com/jon4hz/jellysweep/pkg/jellyseerr"
 	"github.com/samber/lo"
@@ -50,8 +42,7 @@ var (
 type Engine struct {
 	cfg        *config.Config
 	db         database.DB
-	filters    *filter.Filter
-	policy     *policy.Engine
+	settings   *settings.Store
 	jellyfin   *jellyfin.Client
 	stats      stats.Statser
 	jellyseerr *jellyseerr.Client
@@ -78,8 +69,7 @@ type data struct {
 }
 
 // New creates a new Engine instance.
-func New(cfg *config.Config, db database.DB, initialDBMigration bool) (*Engine, error) {
-	// Create scheduler first
+func New(cfg *config.Config, db database.DB, settingsStore *settings.Store, initialDBMigration bool) (*Engine, error) {
 	sched, err := scheduler.New()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create scheduler: %w", err)
@@ -95,8 +85,10 @@ func New(cfg *config.Config, db database.DB, initialDBMigration bool) (*Engine, 
 		return nil, fmt.Errorf("failed to create engine cache: %w", err)
 	}
 
-	// Create Jellyfin client
-	jellyfinClient := jellyfin.New(cfg)
+	jellyfinClient := jellyfin.New(cfg, func(libraryName string) bool {
+		ls, ok := settingsStore.Library(libraryName)
+		return ok && ls.Enabled
+	})
 
 	var sonarrClient arr.Arrer
 	if cfg.Sonarr != nil {
@@ -112,44 +104,21 @@ func New(cfg *config.Config, db database.DB, initialDBMigration bool) (*Engine, 
 		log.Warn("Radarr configuration is missing, some features will be disabled")
 	}
 
-	filterList := []filter.Filterer{
-		databasefilter.New(db),
-		seriesfilter.New(cfg),
-		tagsfilter.New(cfg),
-		sizefilter.New(cfg),
-		agefilter.New(cfg, db, sonarrClient, radarrClient),
-		streamfilter.New(cfg, statsClient),
-	}
-
-	if cfg.Tunarr != nil {
-		tunarrF, err := tunarrfilter.New(cfg)
-		if err != nil {
-			log.Warn("failed to create Tunarr filter", "error", err)
-		} else {
-			filterList = append(filterList, tunarrF)
-		}
-	}
-
-	filters := filter.New(filterList...)
-
 	var jellyseerrClient *jellyseerr.Client
 	if cfg.Jellyseerr != nil {
 		jellyseerrClient = jellyseerr.New(cfg.Jellyseerr)
 	}
 
-	// Initialize email notification service
 	var emailService *email.NotificationService
 	if cfg.Email != nil {
 		emailService = email.New(cfg.Email)
 	}
 
-	// Initialize ntfy client
 	var ntfyClient *ntfy.Client
 	if cfg.Ntfy != nil && cfg.Ntfy.Enabled {
 		ntfyClient = ntfy.NewClient(cfg.Ntfy)
 	}
 
-	// Initialize webpush client
 	var webpushClient *webpush.Client
 	if cfg.WebPush != nil && cfg.WebPush.Enabled {
 		webpushClient = webpush.NewClient(cfg.WebPush)
@@ -158,9 +127,8 @@ func New(cfg *config.Config, db database.DB, initialDBMigration bool) (*Engine, 
 	engine := &Engine{
 		cfg:                cfg,
 		db:                 db,
+		settings:           settingsStore,
 		initialDBMigration: initialDBMigration,
-		filters:            filters,
-		policy:             policy.NewEngine(),
 		jellyfin:           jellyfinClient,
 		stats:              statsClient,
 		jellyseerr:         jellyseerrClient,
@@ -177,7 +145,6 @@ func New(cfg *config.Config, db database.DB, initialDBMigration bool) (*Engine, 
 		cache:      engineCache,
 	}
 
-	// Setup scheduled jobs
 	if err := engine.setupJobs(); err != nil {
 		return nil, fmt.Errorf("failed to setup jobs: %w", err)
 	}
@@ -217,7 +184,9 @@ func (e *Engine) runCleanupJob(ctx context.Context) (err error) {
 		log.Error("An error occurred while marking media for deletion")
 	}
 
-	e.removeRecentlyPlayedItems(ctx)
+	if err := e.unqueueWatchedShows(ctx); err != nil {
+		log.Error("An error occurred while un-queueing watched shows", "error", err)
+	}
 
 	// only delete media if there was no previous error
 	if err == nil {
@@ -263,58 +232,36 @@ func (e *Engine) removeProtectedExpiredItems(ctx context.Context) {
 	log.Info("Media items with expired protection removal process completed")
 }
 
-func (e *Engine) removeRecentlyPlayedItems(ctx context.Context) {
-	log.Info("Removing recently played items from database")
-
-	mediaItems, err := e.db.GetMediaItems(ctx, true)
+// unqueueWatchedShows removes queued TV-show items from the database when an episode
+// has been watched after the item was queued. Watching any episode resets a show's
+// lifetime per the user-facing model, so the show should leave the deletion queue.
+func (e *Engine) unqueueWatchedShows(ctx context.Context) error {
+	mediaItems, err := e.db.GetMediaItems(ctx, false)
 	if err != nil {
-		log.Error("Failed to get media items from database", "error", err)
-		return
+		return fmt.Errorf("get media items: %w", err)
 	}
-
-	if len(mediaItems) == 0 {
-		log.Debug("No media items found in database to check for recent plays")
-		return
-	}
-
 	for _, item := range mediaItems {
+		if item.MediaType != database.MediaTypeTV || item.QueuedAt == nil {
+			continue
+		}
 		watch, err := e.stats.GetWatchInfo(ctx, item.JellyfinID)
 		if err != nil {
-			log.Error("Failed to get watch info for item", "title", item.Title, "jellyfinID", item.JellyfinID, "error", err)
+			log.Error("Failed to get watch info for queued show", "title", item.Title, "jellyfinID", item.JellyfinID, "error", err)
 			continue
 		}
-		lastPlayed := watch.LastPlayed
-
-		if lastPlayed.IsZero() {
-			log.Debug("Item has never been played, skipping removal", "title", item.Title, "jellyfinID", item.JellyfinID)
+		if watch.LastPlayed.IsZero() || !watch.LastPlayed.After(*item.QueuedAt) {
 			continue
 		}
-
-		libraryConfig := e.cfg.GetLibraryConfig(item.LibraryName)
-		if libraryConfig == nil {
-			log.Warn("Library config not found", "library", item.LibraryName)
-			continue
-		}
-
-		timeSinceLastPlayed := time.Since(lastPlayed)
-		thresholdDuration := time.Duration(libraryConfig.GetLastStreamThreshold()) * 24 * time.Hour
-		if timeSinceLastPlayed > thresholdDuration {
-			log.Debug("Item last played outside of threshold, skipping removal", "title", item.Title, "jellyfinID", item.JellyfinID, "lastPlayed", lastPlayed.Format(time.RFC3339))
-			continue
-		}
+		log.Info("Show watched after queueing, removing from deletion queue", "title", item.Title, "lastPlayed", watch.LastPlayed.Format(time.RFC3339))
 		item.DBDeleteReason = database.DBDeleteReasonStreamed
-		// Create deletion event for streamed items
 		if err := e.CreateStreamedEvent(ctx, &item); err != nil {
-			log.Error("failed to create deletion event", "title", item.Title, "error", err)
+			log.Error("failed to create streamed event", "title", item.Title, "error", err)
 		}
-
 		if err := e.db.DeleteMediaItem(ctx, &item); err != nil {
-			log.Error("Failed to remove recently played item from database", "title", item.Title, "jellyfinID", item.JellyfinID, "error", err)
-			continue
+			log.Error("failed to remove un-queued show from database", "title", item.Title, "error", err)
 		}
 	}
-
-	log.Info("Recently played items removal process completed")
+	return nil
 }
 
 func (e *Engine) removeItemsNotFoundAnymore(ctx context.Context, mediaItems []arr.MediaItem) error {
@@ -352,55 +299,179 @@ func (e *Engine) removeItemsNotFoundAnymore(ctx context.Context, mediaItems []ar
 	return nil
 }
 
+// queueDecision is the result of evaluating an arr.MediaItem against the lifetime model.
+// When queue is true the item should enter the deletion queue with the given timing.
+type queueDecision struct {
+	queue       bool
+	reason      string
+	importedAt  time.Time
+	lastWatched time.Time
+	// queueAt is the timestamp recorded as QueuedAt on the DB row.
+	// The actual on-disk deletion happens at queueAt + library.DeletionPeriodDays.
+	queueAt time.Time
+}
+
 func (e *Engine) markForDeletion(ctx context.Context, mediaItems []arr.MediaItem) error {
-	mediaItems, err := e.filters.ApplyAll(ctx, mediaItems)
+	// Snapshot the items already tracked in the DB so we don't re-queue them.
+	tracked, err := e.db.GetMediaItems(ctx, true)
 	if err != nil {
-		return err
+		return fmt.Errorf("read tracked media: %w", err)
+	}
+	trackedKeys := make(map[string]struct{}, len(tracked))
+	for _, t := range tracked {
+		trackedKeys[t.JellyfinID] = struct{}{}
 	}
 
-	// Populate requester information from Jellyseerr
-	log.Info("Populating requester information")
-	mediaItems = e.populateRequesterInfo(ctx, mediaItems)
-
-	// Reset and populate user notifications for email sending
-	e.data.userNotifications = make(map[string][]arr.MediaItem)
+	now := time.Now()
+	toQueue := make([]arr.MediaItem, 0)
+	decisions := make([]queueDecision, 0)
 
 	for _, item := range mediaItems {
+		if _, alreadyTracked := trackedKeys[item.JellyfinID]; alreadyTracked {
+			continue
+		}
+		dec, ok := e.shouldQueue(ctx, item, now)
+		if !ok {
+			continue
+		}
+		toQueue = append(toQueue, item)
+		decisions = append(decisions, dec)
+		log.Info("Queueing media item for deletion", "title", item.Title, "library", item.LibraryName, "reason", dec.reason)
+	}
+
+	log.Info("Populating requester information")
+	toQueue = e.populateRequesterInfo(ctx, toQueue)
+
+	e.data.userNotifications = make(map[string][]arr.MediaItem)
+	for _, item := range toQueue {
 		if item.RequestedBy != "" {
 			e.data.userNotifications[item.RequestedBy] = append(e.data.userNotifications[item.RequestedBy], item)
 		}
-		log.Info("Marking media item for deletion", "name", item.Title, "library", item.LibraryName)
 	}
 
-	log.Info("Media items filtered successfully")
-
-	if len(mediaItems) == 0 {
-		log.Info("No media items marked for deletion after filtering")
+	if len(toQueue) == 0 {
+		log.Info("No media items queued for deletion this run")
 		return nil
 	}
 
-	// save items to database
-	if err := e.saveMediaItemsToDatabase(mediaItems); err != nil {
-		log.Error("failed to save media items to database", "error", err)
+	if err := e.saveQueuedMediaItems(ctx, toQueue, decisions); err != nil {
+		log.Error("failed to save queued media items", "error", err)
 		return err
 	}
-	log.Info("Media items saved to database successfully")
+	log.Info("Queued media items saved to database successfully", "count", len(toQueue))
 
-	// Send email notifications before marking for deletion
 	e.sendEmailNotifications()
-
-	// Send ntfy deletion summary notification
-	if err := e.sendNtfyDeletionSummary(ctx, mediaItems); err != nil {
+	if err := e.sendNtfyDeletionSummary(ctx, toQueue); err != nil {
 		log.Error("failed to send ntfy deletion summary", "error", err)
-		// Don't return here, continue with the cleanup process
 	}
 	return nil
+}
+
+// shouldQueue evaluates a single arr.MediaItem against its library's lifetime settings
+// and returns a queueDecision indicating whether (and why) it should be queued.
+func (e *Engine) shouldQueue(ctx context.Context, item arr.MediaItem, now time.Time) (queueDecision, bool) {
+	libCfg, ok := e.settings.Library(item.LibraryName)
+	if !ok || !libCfg.Enabled {
+		return queueDecision{}, false
+	}
+
+	importedAt := itemImportedAt(item)
+	if importedAt.IsZero() {
+		log.Debug("skipping item with no import date", "title", item.Title)
+		return queueDecision{}, false
+	}
+
+	watch, err := e.stats.GetWatchInfo(ctx, item.JellyfinID)
+	if err != nil {
+		log.Error("failed to get watch info", "title", item.Title, "jellyfinID", item.JellyfinID, "error", err)
+		return queueDecision{}, false
+	}
+
+	lifetime := time.Duration(libCfg.LifetimeDays) * 24 * time.Hour
+
+	switch item.MediaType {
+	case models.MediaTypeMovie:
+		if completedMovie(item, watch, libCfg.CompletionThresholdPct) {
+			return queueDecision{
+				queue:       true,
+				reason:      "watched_completed",
+				importedAt:  importedAt,
+				lastWatched: watch.LastPlayed,
+				queueAt:     now,
+			}, true
+		}
+		if now.Sub(importedAt) >= lifetime {
+			return queueDecision{
+				queue:       true,
+				reason:      "lifetime_expired",
+				importedAt:  importedAt,
+				lastWatched: watch.LastPlayed,
+				queueAt:     now,
+			}, true
+		}
+		return queueDecision{}, false
+
+	case models.MediaTypeTV:
+		origin := importedAt
+		if !watch.LastPlayed.IsZero() && watch.LastPlayed.After(origin) {
+			origin = watch.LastPlayed
+		}
+		if now.Sub(origin) >= lifetime {
+			return queueDecision{
+				queue:       true,
+				reason:      "lifetime_expired",
+				importedAt:  importedAt,
+				lastWatched: watch.LastPlayed,
+				queueAt:     now,
+			}, true
+		}
+		return queueDecision{}, false
+	}
+
+	return queueDecision{}, false
+}
+
+// completedMovie reports whether the sum of recorded playback durations for a movie
+// meets or exceeds the library's completion-percent threshold of the item's runtime.
+// The sum is capped at the runtime so re-watches do not skew the percentage.
+func completedMovie(item arr.MediaItem, watch stats.WatchInfo, thresholdPct int) bool {
+	runtimeMinutes := item.MovieResource.GetRuntime()
+	if runtimeMinutes <= 0 {
+		return false
+	}
+	runtime := time.Duration(runtimeMinutes) * time.Minute
+	played := watch.TotalPlayed
+	if played <= 0 {
+		return false
+	}
+	if played > runtime {
+		played = runtime
+	}
+	if thresholdPct <= 0 {
+		thresholdPct = 90
+	}
+	pct := int((played * 100) / runtime)
+	if pct >= thresholdPct {
+		log.Debug("movie completion threshold reached", "title", item.Title, "pct", pct, "threshold", thresholdPct)
+		return true
+	}
+	return false
+}
+
+func itemImportedAt(item arr.MediaItem) time.Time {
+	switch item.MediaType {
+	case models.MediaTypeMovie:
+		return item.MovieResource.GetAdded()
+	case models.MediaTypeTV:
+		return item.SeriesResource.GetAdded()
+	}
+	return time.Time{}
 }
 
 // gatherMediaItems gathers all media items from Jellyfin, Sonarr, and Radarr.
 // It merges them into a single collection grouped by library.
 func (e *Engine) gatherMediaItems(ctx context.Context) ([]arr.MediaItem, error) {
-	jellyfinItems, libraryFoldersMap, err := e.jellyfin.GetJellyfinItems(ctx)
+	jellyfinItems, _, err := e.jellyfin.GetJellyfinItems(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get jellyfin items: %w", err)
 	}
@@ -421,16 +492,9 @@ func (e *Engine) gatherMediaItems(ctx context.Context) ([]arr.MediaItem, error) 
 		}
 	}
 
-	// Merge all media items
 	mediaItems := make([]arr.MediaItem, 0, len(sonarrItems)+len(radarrItems))
 	mediaItems = append(mediaItems, sonarrItems...)
 	mediaItems = append(mediaItems, radarrItems...)
-
-	// Set deletion policies with freshly gathered library folders map
-	e.policy.SetPolicies(
-		policy.NewDefaultDelete(e.cfg),
-		policy.NewDiskUsageDelete(e.cfg, libraryFoldersMap),
-	)
 
 	return mediaItems, nil
 }
@@ -478,29 +542,46 @@ func arrMediaToDBMediaItem(item arr.MediaItem) database.Media {
 	return dbItem
 }
 
-func (e *Engine) saveMediaItemsToDatabase(mediaItems []arr.MediaItem) error {
-	dbMediaItems := make([]database.Media, 0)
-
-	for _, item := range mediaItems {
+// saveQueuedMediaItems persists the items chosen by shouldQueue into the database,
+// stamping QueuedAt, lifetime metadata, and the computed DefaultDeleteAt grace deadline.
+func (e *Engine) saveQueuedMediaItems(ctx context.Context, mediaItems []arr.MediaItem, decisions []queueDecision) error {
+	dbItems := make([]database.Media, 0, len(mediaItems))
+	for i, item := range mediaItems {
 		dbItem := arrMediaToDBMediaItem(item)
-		if err := e.policy.ApplyAll(&dbItem); err != nil {
-			log.Error("failed to apply policies to media item", "title", dbItem.Title, "error", err)
+		if dbItem.Title == "" {
 			continue
 		}
-		dbMediaItems = append(dbMediaItems, dbItem)
+		dec := decisions[i]
+		libCfg, ok := e.settings.Library(item.LibraryName)
+		if !ok {
+			log.Warn("library settings missing at save time, skipping", "library", item.LibraryName)
+			continue
+		}
+		dbItem.ImportedAt = dec.importedAt
+		if !dec.lastWatched.IsZero() {
+			lw := dec.lastWatched
+			dbItem.LastWatchedAt = &lw
+		}
+		qa := dec.queueAt
+		dbItem.QueuedAt = &qa
+		dbItem.QueueReason = dec.reason
+		dbItem.DefaultDeleteAt = qa.Add(time.Duration(libCfg.DeletionPeriodDays) * 24 * time.Hour)
+		dbItems = append(dbItems, dbItem)
 	}
 
-	if err := e.db.CreateMediaItems(context.Background(), dbMediaItems); err != nil {
-		return fmt.Errorf("failed to create media items to database: %w", err)
+	if len(dbItems) == 0 {
+		return nil
 	}
 
-	// Create history events for newly picked up items
-	for i := range dbMediaItems {
-		if err := e.CreatePickedUpEvent(context.Background(), &dbMediaItems[i]); err != nil {
-			log.Error("failed to create picked up event", "title", dbMediaItems[i].Title, "error", err)
+	if err := e.db.CreateMediaItems(ctx, dbItems); err != nil {
+		return fmt.Errorf("create media items: %w", err)
+	}
+
+	for i := range dbItems {
+		if err := e.CreatePickedUpEvent(ctx, &dbItems[i]); err != nil {
+			log.Error("failed to create picked up event", "title", dbItems[i].Title, "error", err)
 		}
 	}
-
 	return nil
 }
 
@@ -581,9 +662,14 @@ func (e *Engine) migrateTagsToDatabase(ctx context.Context) error {
 	}
 
 	dbItems := make([]database.Media, 0)
+	now := time.Now()
 	for _, item := range legacyitems {
 		mustMigrate := false
 		dbItem := arrMediaToDBMediaItem(item)
+		if dbItem.Title == "" {
+			continue
+		}
+		dbItem.ImportedAt = itemImportedAt(item)
 		for _, tagName := range item.Tags {
 			tag, err := tags.ParseJellysweepTag(tagName)
 			if err != nil {
@@ -594,27 +680,22 @@ func (e *Engine) migrateTagsToDatabase(ctx context.Context) error {
 				dbItem.ProtectedUntil = &tag.ProtectedUntil
 				mustMigrate = true
 			}
-
 			if tag.MustDelete {
 				dbItem.Unkeepable = true
 				mustMigrate = true
 			}
-
-			if tag.DiskUsage > 0 && !tag.DeletionDate.IsZero() {
-				dbItem.DiskUsageDeletePolicies = append(dbItem.DiskUsageDeletePolicies, database.DiskUsageDeletePolicy{
-					Threshold:  tag.DiskUsage,
-					DeleteDate: tag.DeletionDate,
-				})
-				mustMigrate = true
-			} else if !tag.DeletionDate.IsZero() {
+			if !tag.DeletionDate.IsZero() {
 				dbItem.DefaultDeleteAt = tag.DeletionDate
+				qa := now
+				dbItem.QueuedAt = &qa
+				dbItem.QueueReason = "legacy_migration"
 				mustMigrate = true
 			}
 		}
 
 		if mustMigrate {
 			dbItems = append(dbItems, dbItem)
-			log.Info("Migrating item to database", "title", dbItem.Title, "library", dbItem.LibraryName)
+			log.Info("Migrating legacy-tagged item to database", "title", dbItem.Title, "library", dbItem.LibraryName)
 		}
 	}
 

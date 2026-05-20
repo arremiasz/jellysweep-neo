@@ -12,7 +12,7 @@ import (
 // These collections show users which media items are scheduled for deletion.
 // There are separate collections for movies and TV shows.
 func (e *Engine) createJellyfinLeavingCollections(ctx context.Context) error {
-	if !e.cfg.LeavingCollectionsEnabled {
+	if !e.settings.App().LeavingCollectionsEnabled {
 		log.Debug("Leaving collections feature is disabled, skipping")
 		return nil
 	}
@@ -48,7 +48,7 @@ func (e *Engine) createJellyfinLeavingCollections(ctx context.Context) error {
 
 	// Create/update leaving collections if we have items
 	if len(leavingMovies) > 0 {
-		if err := e.createOrUpdateLeavingCollection(ctx, e.cfg.LeavingCollectionsMovieName, leavingMovies); err != nil {
+		if err := e.createOrUpdateLeavingCollection(ctx, e.settings.App().LeavingCollectionsMovieName, leavingMovies); err != nil {
 			log.Error("Failed to create/update leaving movies collection", "error", err)
 			return fmt.Errorf("failed to create/update leaving movies collection: %w", err)
 		}
@@ -56,7 +56,7 @@ func (e *Engine) createJellyfinLeavingCollections(ctx context.Context) error {
 	}
 
 	if len(leavingTVShows) > 0 {
-		if err := e.createOrUpdateLeavingCollection(ctx, e.cfg.LeavingCollectionsTVName, leavingTVShows); err != nil {
+		if err := e.createOrUpdateLeavingCollection(ctx, e.settings.App().LeavingCollectionsTVName, leavingTVShows); err != nil {
 			log.Error("Failed to create/update leaving TV shows collection", "error", err)
 			return fmt.Errorf("failed to create/update leaving TV shows collection: %w", err)
 		}
@@ -117,7 +117,7 @@ func (e *Engine) createOrUpdateLeavingCollection(ctx context.Context, collection
 
 // removeItemsFromLeavingCollections removes items from the leaving collections if they are no longer marked for deletion.
 func (e *Engine) removeItemsFromLeavingCollections(ctx context.Context) {
-	if !e.cfg.LeavingCollectionsEnabled {
+	if !e.settings.App().LeavingCollectionsEnabled {
 		log.Debug("Leaving collections feature is disabled, skipping cleanup")
 		return
 	}
@@ -125,12 +125,12 @@ func (e *Engine) removeItemsFromLeavingCollections(ctx context.Context) {
 	log.Info("Cleaning up leaving collections")
 
 	// Find leaving collections
-	moviesCollectionID, err := e.jellyfin.FindCollectionByName(ctx, e.cfg.LeavingCollectionsMovieName)
+	moviesCollectionID, err := e.jellyfin.FindCollectionByName(ctx, e.settings.App().LeavingCollectionsMovieName)
 	if err != nil {
 		log.Warn("Failed to find leaving movies collection", "error", err)
 	}
 
-	tvShowsCollectionID, err := e.jellyfin.FindCollectionByName(ctx, e.cfg.LeavingCollectionsTVName)
+	tvShowsCollectionID, err := e.jellyfin.FindCollectionByName(ctx, e.settings.App().LeavingCollectionsTVName)
 	if err != nil {
 		log.Warn("Failed to find leaving TV shows collection", "error", err)
 	}
@@ -157,14 +157,14 @@ func (e *Engine) removeItemsFromLeavingCollections(ctx context.Context) {
 
 	// Remove items from leaving movies collection if they're no longer marked for deletion
 	if moviesCollectionID != "" {
-		if err := e.removeItemsNotInSet(ctx, moviesCollectionID, currentlyLeavingMovies, e.cfg.LeavingCollectionsMovieName); err != nil {
+		if err := e.removeItemsNotInSet(ctx, moviesCollectionID, currentlyLeavingMovies, e.settings.App().LeavingCollectionsMovieName); err != nil {
 			log.Error("Failed to clean up leaving movies collection", "error", err)
 		}
 	}
 
 	// Remove items from leaving TV shows collection if they're no longer marked for deletion
 	if tvShowsCollectionID != "" {
-		if err := e.removeItemsNotInSet(ctx, tvShowsCollectionID, currentlyLeavingTVShows, e.cfg.LeavingCollectionsTVName); err != nil {
+		if err := e.removeItemsNotInSet(ctx, tvShowsCollectionID, currentlyLeavingTVShows, e.settings.App().LeavingCollectionsTVName); err != nil {
 			log.Error("Failed to clean up leaving TV shows collection", "error", err)
 		}
 	}
